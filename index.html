@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+
+<body
+  style="font-family:sans-serif;background:#FBD5C7;color:#0E0E10;display:flex;align-items:center;justify-content:center;height:100vh">
+  <button id="hold"
+    style="font-size:18px;padding:18px 28px;border-radius:12px;background:#FFFFFF;border:1px solid #0E0E10">
+    Hold to Speak
+  </button>
+  <script>
+    const OPENAI_KEY = ""; // test only; don't ship keys to web in prod
+
+    let mediaRecorder, chunks = [];
+    let isRecording = false;
+    let recStartedAt = 0;
+
+    const btn = document.getElementById('hold');
+    btn.onmousedown = startRec;
+    btn.onmouseup = stopRec;
+
+    async function startRec() {
+      if (isRecording) return;
+
+      // 1) Request mic (Chrome on http://localhost)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // 2) Choose a supported mime
+        let mime = "";
+        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
+        else if (MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
+        else if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) mime = "audio/ogg;codecs=opus";
+        else if (MediaRecorder.isTypeSupported("audio/ogg")) mime = "audio/ogg";
+
+        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        chunks = [];
+        isRecording = true;
+        recStartedAt = Date.now();
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size) chunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          try {
+            // Build a proper File for the API
+            const type = mediaRecorder.mimeType || "audio/webm";
+            const ext = type.includes("ogg") ? "ogg" : "webm";
+            const blob = new Blob(chunks, { type });
+            if (!blob.size) throw new Error("Empty recording blob");
+
+            const file = new File([blob], `input.${ext}`, { type });
+
+            const transcript = await stt(file);
+            const reply = await llm(transcript);
+            const audioBlob = await tts(reply);
+
+            const url = URL.createObjectURL(audioBlob);
+            const audio = new Audio(url);
+            await audio.play();
+          } catch (err) {
+            console.error("Pipeline error:", err);
+          } finally {
+            // stop mic
+            mediaRecorder.stream.getTracks().forEach(t => t.stop());
+            isRecording = false;
+          }
+        };
+
+        // Timeslice ensures data available fires even for short presses
+        mediaRecorder.start(100);
+      } catch (e) {
+        console.error("getUserMedia error:", e);
+        // If no prompt: check Chrome Site Settings -> Mic, and macOS Settings -> Privacy & Security -> Microphone
+      }
+    }
+
+    function stopRec() {
+      if (!isRecording || !mediaRecorder) return;
+
+      // 3) Ensure minimum duration before stopping (>= 0.3 s > server’s 0.1 s floor)
+      const MIN_MS = 300;
+      const elapsed = Date.now() - recStartedAt;
+      const wait = Math.max(0, MIN_MS - elapsed);
+
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+          // If you want, you can flush one last chunk *before* stop:
+          // mediaRecorder.requestData();   // safe here, still "recording"
+          mediaRecorder.stop();
+        }
+      }, wait);
+    }
+
+    // 4) STT sends a File and forces English
+    async function stt(file) {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("model", "whisper-1");
+      fd.append("language", "en");
+
+      const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${OPENAI_KEY}` },
+        body: fd
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        console.error("STT failed:", r.status, err);
+        throw new Error(err);
+      }
+      const j = await r.json();
+      return j.text || "";
+    }
+
+    async function llm(text) {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "You are warm and concise. Reply in 1-2 short sentences." },
+            { role: "user", content: text }
+          ]
+        })
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      return j.choices?.[0]?.message?.content || "";
+    }
+
+    async function tts(text) {
+      const r = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "audio/mpeg", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({ model: "tts-1", voice: "alloy", input: text, format: "mp3" })
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const buf = await r.arrayBuffer();
+      return new Blob([buf], { type: "audio/mpeg" });
+    }
+  </script>
+
+</body>
+
+</html>
