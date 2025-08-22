@@ -1,0 +1,11 @@
+# environment files
+.env
+.env.*
+*.env
+*.env.*
+.env.local
+.dev.vars          # Cloudflare Wrangler local dev vars
+
+# keys/certs (just in case)
+*.pem
+*.key
