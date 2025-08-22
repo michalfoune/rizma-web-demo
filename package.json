@@ -1,0 +1,24 @@
+{
+  "name": "rizma-web-demo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michalfoune/rizma-web-demo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/michalfoune/rizma-web-demo/issues"
+  },
+  "homepage": "https://github.com/michalfoune/rizma-web-demo#readme",
+  "devDependencies": {
+    "wrangler": "^4.32.0"
+  }
+}

@@ -17,8 +17,8 @@
     Hold to Speak
   </button>
   <script>
-    // test only; don't ship keys to web in prod
-    const OPENAI_KEY = ""; 
+    // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
+    const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
 
     let mediaRecorder, chunks = [];
     let isRecording = false;
@@ -109,9 +109,8 @@
       fd.append("model", "gpt-4o-transcribe"); // "whisper-1" 
       fd.append("language", "en");
 
-      const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      const r = await fetch(`${API_BASE}/audio/transcriptions`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${OPENAI_KEY}` },
         body: fd
       });
       if (!r.ok) {
@@ -124,9 +123,9 @@
     }
 
     async function llm(text) {
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      const r = await fetch(`${API_BASE}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gpt-4o",
           messages: [
@@ -141,9 +140,9 @@
     }
 
     async function tts(text) {
-      const r = await fetch("https://api.openai.com/v1/audio/speech", {
+      const r = await fetch(`${API_BASE}/audio/speech`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "audio/mpeg", Authorization: `Bearer ${OPENAI_KEY}` },
+        headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
         body: JSON.stringify({ model: "tts-1-hd-1106", voice: "alloy", input: text, format: "mp3" })
       });
       if (!r.ok) throw new Error(await r.text());

@@ -9,3 +9,4 @@
 # keys/certs (just in case)
 *.pem
 *.key
+.DS_Store
