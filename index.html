@@ -18,10 +18,7 @@
   </button>
   <div id="panel" style="max-width:800px; width:calc(100% - 48px); margin:12px auto 0; background:#FFFFFF; color:#0E0E10; border:1px solid #0E0E10; border-radius:12px; padding:12px 16px;">
     <div id="status" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Idle</div>
-    <div style="font-weight:bold; margin-bottom:4px;">You said</div>
-    <div id="sttText" style="min-height:24px; white-space:pre-wrap; word-break:break-word; margin-bottom:10px;"></div>
-    <div style="font-weight:bold; margin-bottom:4px;">Elena</div>
-    <div id="llmText" style="min-height:24px; white-space:pre-wrap; word-break:break-word;"></div>
+    <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
   </div>
   <script>
     // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
@@ -33,13 +30,38 @@
 
     const btn = document.getElementById('hold');
     const statusEl = document.getElementById('status');
-    const sttEl = document.getElementById('sttText');
-    const llmEl = document.getElementById('llmText');
+    const chatEl = document.getElementById('chat');
+
+    function addMessage(text, sender) {
+      if (!chatEl) return;
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = sender === 'user' ? 'flex-end' : 'flex-start';
+      const bubble = document.createElement('div');
+      bubble.textContent = (text || '').trim();
+      bubble.style.maxWidth = '80%';
+      bubble.style.padding = '10px 12px';
+      bubble.style.border = '1px solid #0E0E10';
+      bubble.style.borderRadius = '12px';
+      bubble.style.whiteSpace = 'pre-wrap';
+      bubble.style.wordBreak = 'break-word';
+      // Colors: user on right = peach, Elena on left = white
+      if (sender === 'user') {
+        bubble.style.background = '#FBD5C7';   // RizmaPeach
+      } else {
+        bubble.style.background = '#FFFFFF';   // RizmaWhite
+      }
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
     btn.onmousedown = startRec;
     btn.onmouseup = stopRec;
 
     async function startRec() {
       if (isRecording) return;
+      if (statusEl) statusEl.textContent = 'Listening...';
 
       // 1) Request mic (Chrome on http://localhost)
       try {
@@ -72,12 +94,15 @@
             const file = new File([blob], `input.${ext}`, { type });
 
             const transcript = await stt(file);
-            if (sttEl) sttEl.textContent = (transcript || '').trim();
-            if (statusEl) statusEl.textContent = 'Transcribing...';
+            // show the user's transcribed text as a right-aligned bubble
+            addMessage(transcript || '(no speech detected)', 'user');
+            if (statusEl) statusEl.textContent = 'Thinking...';
 
             const reply = await llm(transcript);
-            if (llmEl) llmEl.textContent = (reply || '').trim();
+            // show Elena's reply as a left-aligned bubble
+            addMessage(reply || '', 'elena');
             if (statusEl) statusEl.textContent = 'Replying...';
+
             const audioBlob = await tts(reply);
 
             const url = URL.createObjectURL(audioBlob);
@@ -145,7 +170,7 @@
         body: JSON.stringify({
           model: "gpt-4o",
           messages: [
-            { role: "system", content: "You are warm and concise. The lenght of the response should match the depth of the topic." },
+            { role: "system", content: "You are warm and concise. The length of the response should match the depth of the topic." },
             { role: "user", content: text }
           ]
         })
