@@ -41,15 +41,15 @@
       bubble.textContent = (text || '').trim();
       bubble.style.maxWidth = '80%';
       bubble.style.padding = '10px 12px';
-      bubble.style.border = '1px solid #0E0E10';
+      bubble.style.border = 'none';
       bubble.style.borderRadius = '12px';
       bubble.style.whiteSpace = 'pre-wrap';
       bubble.style.wordBreak = 'break-word';
-      // Colors: user on right = peach, Elena on left = white
+      // Colors: user on right = lighter peach, Elena on left = very light gray
       if (sender === 'user') {
-        bubble.style.background = '#FBD5C7';   // RizmaPeach
+        bubble.style.background = '#FFE6DE';   // lighter peach
       } else {
-        bubble.style.background = '#FFFFFF';   // RizmaWhite
+        bubble.style.background = '#F5F5F5';   // very light gray for Elena
       }
       row.appendChild(bubble);
       chatEl.appendChild(row);
