@@ -32,8 +32,9 @@
   </section>
 
   <!-- Footer -->
-  <footer style="margin:8px 0 24px; color:#8B8B8B; font-size:14px;">
-    Secure &bull; Private &bull; Professional
+  <footer style="margin:8px 0 24px; color:#8B8B8B; font-size:14px; display:flex; gap:8px; align-items:center;">
+    <span>Secure &bull; Private &bull; Professional</span>
+    <button id="reset" style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset Session</button>
   </footer>
 
   <script>
@@ -43,15 +44,109 @@
     let mediaRecorder, chunks = [];
     let isRecording = false;
     let recStartedAt = 0;
+    let hasSessionStarted = false; // tracks whether we've recorded at least once
 
     const btn = document.getElementById('hold');
     const statusEl = document.getElementById('status');
     const chatEl = document.getElementById('chat');
 
+    // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
+    const SYSTEM_PROMPT = "You are Elena, an empathetic assistant. The length of your response should match the topic and the need for details. No need for fluff but provide in-depth response or guidance if needed. Validate feelings, avoid diagnoses or crisis guidance. Be concise and warm.";
+
+    const MEMORY_KEY = "rizma_memory_v1";
+    const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12 messages)
+
+    let memory = {
+      summary: "",                 // running summary string
+      messages: []                 // full chronological list of {role:'user'|'assistant', content:string}
+    };
+
+    function saveMemory() {
+      try { localStorage.setItem(MEMORY_KEY, JSON.stringify({ summary: memory.summary, messages: memory.messages })); } catch {}
+    }
+
+    function loadMemory() {
+      try {
+        const raw = localStorage.getItem(MEMORY_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        memory.summary = data.summary || "";
+        memory.messages = Array.isArray(data.messages) ? data.messages : [];
+      } catch {}
+    }
+
+    function clearMemory() {
+      memory.summary = "";
+      memory.messages = [];
+      saveMemory();
+      if (chatEl) chatEl.innerHTML = "";
+      hasSessionStarted = false;
+      setBtnRecordingUI(false);
+      if (statusEl) statusEl.textContent = "Idle";
+    }
+
+    function renderHistory() {
+      if (!chatEl || !memory.messages.length) return;
+      chatEl.innerHTML = "";
+      for (const m of memory.messages) {
+        addMessage(m.content, m.role === 'user' ? 'user' : 'elena');
+      }
+    }
+
+    // Build the message array we send to the model: system + summary + recent turns + new user text
+    function buildMessages(userText) {
+      const msgs = [{ role: "system", content: SYSTEM_PROMPT }];
+      if (memory.summary) {
+        msgs.push({ role: "system", content: "Conversation summary so far:\n" + memory.summary });
+      }
+      const recentTurns = memory.messages.slice(-MAX_TURNS_TO_SEND * 2); // user+assistant pairs
+      msgs.push(...recentTurns);
+      msgs.push({ role: "user", content: userText });
+      return msgs;
+    }
+
+    // Periodically compress older turns into the running summary
+    async function maybeSummarize() {
+      const LIMIT = MAX_TURNS_TO_SEND * 2;
+      if (memory.messages.length <= LIMIT) return;
+
+      // Everything except the last LIMIT messages gets summarized
+      const toSummarize = memory.messages.slice(0, memory.messages.length - LIMIT);
+      const contextText = toSummarize.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+
+      const r = await fetch(`${API_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "Summarize the conversation so far in 120-180 words. Capture facts, preferences, goals, and open questions. Output plain text only." },
+            { role: "user", content: `Existing summary:\n${memory.summary || "(none)"}\n\nNew dialogue to fold in:\n${contextText}` }
+          ]
+        })
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const newSummary = j.choices?.[0]?.message?.content || "";
+        if (newSummary) {
+          memory.summary = newSummary.trim();
+          // Drop the summarized messages; keep only the last LIMIT
+          memory.messages = memory.messages.slice(-LIMIT);
+          saveMemory();
+        }
+      }
+    }
+
+    // Load from localStorage on startup and render any prior history
+    loadMemory();
+    renderHistory();
+    // --- End conversation memory ---
+
     // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
     function setBtnRecordingUI(rec) {
       btn.setAttribute('aria-pressed', rec ? 'true' : 'false');
-      btn.textContent = rec ? 'Stop Recording' : 'Start Voice Session';
+      const label = rec ? 'Stop Recording' : (hasSessionStarted ? 'Start Recording' : 'Start Voice Session');
+      btn.textContent = label;
       // subtle state color shift
       btn.style.background = rec ? '#F7C2B0' : '#FBD5C7';
     }
@@ -154,6 +249,7 @@
         chunks = [];
         isRecording = true;
         recStartedAt = Date.now();
+        hasSessionStarted = true;
 
         mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
@@ -168,12 +264,20 @@
 
             const transcript = await stt(file);
             addMessage(transcript || '(no speech detected)', 'user');
+            // persist user turn
+            memory.messages.push({ role: 'user', content: transcript || '' });
+            saveMemory();
             if (statusEl) statusEl.textContent = 'Thinking...';
 
-            const reply = await llm(transcript);
+            const reply = await llm(buildMessages(transcript || ''));
             addMessage(reply || '', 'elena');
-            if (statusEl) statusEl.textContent = 'Replying...';
+            // persist assistant turn
+            memory.messages.push({ role: 'assistant', content: reply || '' });
+            saveMemory();
+            // compress old turns if needed
+            await maybeSummarize();
 
+            if (statusEl) statusEl.textContent = 'Replying...';
             const audioBlob = await tts(reply);
             const url = URL.createObjectURL(audioBlob);
             const audio = new Audio(url);
@@ -190,6 +294,8 @@
         mediaRecorder.start(100); // timeslice so short presses still yield chunks
       } catch (e) {
         console.error("getUserMedia error:", e);
+        // revert UI if permission or device fails
+        setBtnRecordingUI(false);
       }
     }
 
@@ -216,16 +322,15 @@
       return j.text || "";
     }
 
-    async function llm(text) {
+    async function llm(messages) {
       const r = await fetch(`${API_BASE}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "You are warm and concise. The length of the response should match the depth of the topic." },
-            { role: "user", content: text }
-          ]
+          model: "gpt-5",
+          messages,
+          max_tokens: 1200,
+          temperature: 0.7
         })
       });
       if (!r.ok) throw new Error(await r.text());
@@ -242,6 +347,14 @@
       if (!r.ok) throw new Error(await r.text());
       const buf = await r.arrayBuffer();
       return new Blob([buf], { type: "audio/mpeg" });
+    }
+
+    // Reset Session clears memory and UI
+    const resetBtn = document.getElementById('reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        clearMemory();
+      });
     }
   </script>
 </body>
