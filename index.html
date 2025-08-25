@@ -100,8 +100,8 @@
         msgs.push({ role: "system", content: "Conversation summary so far:\n" + memory.summary });
       }
       const recentTurns = memory.messages.slice(-MAX_TURNS_TO_SEND * 2); // user+assistant pairs
+      // ecentTurns already contains the last msg; it was added as transcript in memory.messages.push
       msgs.push(...recentTurns);
-      msgs.push({ role: "user", content: userText });
       return msgs;
     }
 
@@ -323,14 +323,16 @@
     }
 
     async function llm(messages) {
+      console.log("Messages going to LLM:")
+      console.log(messages)
+      console.log("End Messages to LLM")
       const r = await fetch(`${API_BASE}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "gpt-5",
-          messages,
-          max_tokens: 1200,
-          temperature: 0.7
+          model: "gpt-5", // "gpt-4o"
+          messages
+          // max_completion_tokens: 1000
         })
       });
       if (!r.ok) throw new Error(await r.text());
