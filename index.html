@@ -1,25 +1,41 @@
 <!doctype html>
-<html>
-
+<html lang="en">
 <head>
-  <!-- classic fallback -->
-  <link rel="icon" href="/favicon.ico" sizes="any">
-
-  <!-- modern PNGs -->
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rizma</title>
 </head>
+<body style="font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background:#FFFFFF; color:#0E0E10; display:flex; flex-direction:column; align-items:center; gap:24px; min-height:100vh; margin:0;">
+  <!-- Header / Brand -->
+  <header style="margin-top:40px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <img src="rizma_logo_color.png" alt="rizma logo" style="width:36px; height:36px; box-shadow:0 1px 2px rgba(0,0,0,0.06);" />
+      <div style="font-size:28px; font-weight:700; letter-spacing:0.2px;">rizma</div>
+    </div>
+    <div style="font-size:16px; color:#6B6B6B;">Support Between Sessions</div>
+  </header>
 
-<body
-  style="font-family:sans-serif;background:#FBD5C7;color:#0E0E10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;height:100vh">
-  <button id="hold"
-    style="font-size:18px;padding:18px 28px;border-radius:12px;background:#FFFFFF;border:1px solid #0E0E10">
-    Hold to Speak
-  </button>
-  <div id="panel" style="max-width:800px; width:calc(100% - 48px); margin:12px auto 0; background:#FFFFFF; color:#0E0E10; border:1px solid #0E0E10; border-radius:12px; padding:12px 16px;">
+  <!-- Therapist Card -->
+  <section style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
+    <img src="rizma-doc-3-elena_cropped.png" alt="Elena" style="width:120px; height:120px; border-radius:60px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.06);" />
+    <div style="font-size:28px; font-weight:700;">Elena</div>
+    <div style="font-size:16px; color:#6B6B6B; text-align:center; max-width:520px;">Helps with homework and answers questions.</div>
+    <button id="hold" aria-pressed="false" style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+      Start Voice Session
+    </button>
+  </section>
+
+  <!-- Conversation Panel -->
+  <section id="panel" style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04);">
     <div id="status" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Idle</div>
     <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
-  </div>
+  </section>
+
+  <!-- Footer -->
+  <footer style="margin:8px 0 24px; color:#8B8B8B; font-size:14px;">
+    Secure &bull; Private &bull; Professional
+  </footer>
+
   <script>
     // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
     const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
@@ -31,6 +47,70 @@
     const btn = document.getElementById('hold');
     const statusEl = document.getElementById('status');
     const chatEl = document.getElementById('chat');
+
+    // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
+    function setBtnRecordingUI(rec) {
+      btn.setAttribute('aria-pressed', rec ? 'true' : 'false');
+      btn.textContent = rec ? 'Stop Recording' : 'Start Voice Session';
+      // subtle state color shift
+      btn.style.background = rec ? '#F7C2B0' : '#FBD5C7';
+    }
+
+    function isTouchDevice() {
+      return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (navigator.maxTouchPoints > 0);
+    }
+
+    function handleClickToggle(e) {
+      e && e.preventDefault();
+      if (!isRecording) {
+        startRec();
+        setBtnRecordingUI(true);
+      } else {
+        stopRec();
+        setBtnRecordingUI(false);
+      }
+    }
+
+    function handleKeyToggle(e) {
+      // Space or Enter toggles on desktop
+      if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
+        e.preventDefault();
+        handleClickToggle(e);
+      }
+    }
+
+    function handlePointerDown(e) {
+      e.preventDefault();
+      if (!isRecording) {
+        startRec();
+        setBtnRecordingUI(true);
+      }
+    }
+
+    function handlePointerUp(e) {
+      e && e.preventDefault();
+      if (isRecording) {
+        stopRec();
+        setBtnRecordingUI(false);
+      }
+    }
+
+    function bindControls() {
+      if (isTouchDevice()) {
+        // mobile/tablet: press-and-hold
+        btn.style.touchAction = 'none';
+        btn.addEventListener('pointerdown', handlePointerDown, { passive: false });
+        btn.addEventListener('pointerup', handlePointerUp, { passive: false });
+        btn.addEventListener('pointercancel', handlePointerUp);
+        btn.addEventListener('pointerleave', (e) => { if (e.buttons === 0) handlePointerUp(e); });
+      } else {
+        // desktop: click or keyboard to toggle
+        btn.addEventListener('click', handleClickToggle);
+        document.addEventListener('keydown', handleKeyToggle);
+      }
+    }
+    bindControls();
+    // --- End adaptive controls ---
 
     function addMessage(text, sender) {
       if (!chatEl) return;
@@ -56,18 +136,14 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
-    btn.onmousedown = startRec;
-    btn.onmouseup = stopRec;
-
     async function startRec() {
       if (isRecording) return;
       if (statusEl) statusEl.textContent = 'Listening...';
 
-      // 1) Request mic (Chrome on http://localhost)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        // 2) Choose a supported mime
+        // Choose a supported mime
         let mime = "";
         if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
         else if (MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
@@ -79,86 +155,63 @@
         isRecording = true;
         recStartedAt = Date.now();
 
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size) chunks.push(e.data);
-        };
+        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
         mediaRecorder.onstop = async () => {
           try {
-            // Build a proper File for the API
             const type = mediaRecorder.mimeType || "audio/webm";
-            const ext = type.includes("ogg") ? "ogg" : "webm";
+            const ext  = type.includes("ogg") ? "ogg" : "webm";
             const blob = new Blob(chunks, { type });
             if (!blob.size) throw new Error("Empty recording blob");
 
             const file = new File([blob], `input.${ext}`, { type });
 
             const transcript = await stt(file);
-            // show the user's transcribed text as a right-aligned bubble
             addMessage(transcript || '(no speech detected)', 'user');
             if (statusEl) statusEl.textContent = 'Thinking...';
 
             const reply = await llm(transcript);
-            // show Elena's reply as a left-aligned bubble
             addMessage(reply || '', 'elena');
             if (statusEl) statusEl.textContent = 'Replying...';
 
             const audioBlob = await tts(reply);
-
             const url = URL.createObjectURL(audioBlob);
             const audio = new Audio(url);
-            await audio.play();
+            await audio.play().catch(e => console.error('Audio play error:', e));
           } catch (err) {
             console.error("Pipeline error:", err);
           } finally {
-            // stop mic
             mediaRecorder.stream.getTracks().forEach(t => t.stop());
             if (statusEl) statusEl.textContent = 'Idle';
             isRecording = false;
           }
         };
 
-        // Timeslice ensures data available fires even for short presses
-        mediaRecorder.start(100);
+        mediaRecorder.start(100); // timeslice so short presses still yield chunks
       } catch (e) {
         console.error("getUserMedia error:", e);
-        // If no prompt: check Chrome Site Settings -> Mic, and macOS Settings -> Privacy & Security -> Microphone
       }
     }
 
     function stopRec() {
       if (!isRecording || !mediaRecorder) return;
-
-      // 3) Ensure minimum duration before stopping (>= 0.3 s > server’s 0.1 s floor)
       const MIN_MS = 300;
       const elapsed = Date.now() - recStartedAt;
       const wait = Math.max(0, MIN_MS - elapsed);
-
       setTimeout(() => {
         if (mediaRecorder && mediaRecorder.state === "recording") {
-          // If you want, you can flush one last chunk *before* stop:
-          // mediaRecorder.requestData();   // safe here, still "recording"
           mediaRecorder.stop();
         }
       }, wait);
     }
 
-    // 4) STT sends a File and forces English
     async function stt(file) {
       const fd = new FormData();
       fd.append("file", file, file.name);
-      fd.append("model", "gpt-4o-transcribe"); // "whisper-1" 
+      fd.append("model", "gpt-4o-transcribe"); // or "whisper-1"
       fd.append("language", "en");
-
-      const r = await fetch(`${API_BASE}/audio/transcriptions`, {
-        method: "POST",
-        body: fd
-      });
-      if (!r.ok) {
-        const err = await r.text();
-        console.error("STT failed:", r.status, err);
-        throw new Error(err);
-      }
+      const r = await fetch(`${API_BASE}/audio/transcriptions`, { method: "POST", body: fd });
+      if (!r.ok) { throw new Error(await r.text()); }
       const j = await r.json();
       return j.text || "";
     }
@@ -191,7 +244,5 @@
       return new Blob([buf], { type: "audio/mpeg" });
     }
   </script>
-
 </body>
-
-</html>
+ </html>
