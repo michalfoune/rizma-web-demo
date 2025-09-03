@@ -323,9 +323,6 @@
     }
 
     async function llm(messages) {
-      console.log("Messages going to LLM:")
-      console.log(messages)
-      console.log("End Messages to LLM")
       const r = await fetch(`${API_BASE}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
