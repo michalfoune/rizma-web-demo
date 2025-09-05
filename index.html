@@ -1,57 +1,199 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>rizma</title>
 </head>
-<body style="font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background:#FFFFFF; color:#0E0E10; display:flex; flex-direction:column; align-items:center; gap:24px; min-height:100vh; margin:0;">
+
+<body
+  style="font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background:#FFFFFF; color:#0E0E10; display:flex; flex-direction:column; align-items:center; gap:24px; min-height:100vh; margin:0;">
   <!-- Header / Brand -->
   <header style="margin-top:40px; display:flex; flex-direction:column; align-items:center; gap:8px;">
     <div style="display:flex; align-items:center; gap:10px;">
-      <img src="rizma_logo_color.png" alt="rizma logo" style="width:36px; height:36px; box-shadow:0 1px 2px rgba(0,0,0,0.06);" />
+      <img src="rizma_logo_color.png" alt="rizma logo"
+        style="width:36px; height:36px; box-shadow:0 1px 2px rgba(0,0,0,0.06);" />
       <div style="font-size:28px; font-weight:700; letter-spacing:0.2px;">rizma</div>
     </div>
     <div style="font-size:16px; color:#6B6B6B;">Support Between Sessions</div>
   </header>
 
   <!-- Therapist Card -->
-  <section style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
-    <img src="rizma-doc-3-elena_cropped.png" alt="Elena" style="width:120px; height:120px; border-radius:60px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.06);" />
+  <section
+    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
+    <img src="rizma-doc-3-elena_cropped.png" alt="Elena"
+      style="width:120px; height:120px; border-radius:60px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.06);" />
     <div style="font-size:28px; font-weight:700;">Elena</div>
-    <div style="font-size:16px; color:#6B6B6B; text-align:center; max-width:520px;">Helps with homework and answers questions.</div>
-    <button id="hold" aria-pressed="false" style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+    <div style="font-size:16px; color:#6B6B6B; text-align:center; max-width:520px;">Helps with homework and answers
+      questions.</div>
+    <button id="hold" aria-pressed="false"
+      style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
       Start Voice Session
     </button>
   </section>
 
+  <audio id="remoteAudio" autoplay playsinline controls style="width:min(760px, calc(100% - 48px));"></audio>
+  <!-- Fallback audio for HTTP TTS when Realtime fails -->
+  <audio id="fallbackAudio" playsinline style="display:none;"></audio>
+
   <!-- Conversation Panel -->
-  <section id="panel" style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04);">
+  <section id="panel"
+    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04);">
     <div id="status" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Idle</div>
-    <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
+    <div id="chat"
+      style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
   </section>
 
   <!-- Footer -->
   <footer style="margin:8px 0 24px; color:#8B8B8B; font-size:14px; display:flex; gap:8px; align-items:center;">
     <span>Secure &bull; Private &bull; Professional</span>
-    <button id="reset" style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset Session</button>
+    <button id="reset"
+      style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset
+      Session</button>
   </footer>
 
   <script>
     // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
     const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
 
-    let mediaRecorder, chunks = [];
     let isRecording = false;
-    let recStartedAt = 0;
+    let recStartedAt = 0; // kept for UI compatibility; not used by WebRTC path
     let hasSessionStarted = false; // tracks whether we've recorded at least once
+    let chunks = []; // legacy placeholder; no longer used
 
     const btn = document.getElementById('hold');
     const statusEl = document.getElementById('status');
     const chatEl = document.getElementById('chat');
 
+    // Realtime (WebRTC) constants
+    const REALTIME_MODEL = "gpt-realtime"; // per OpenAI Realtime GA; see docs
+    const SESSION_URL = "https://rizma-proxy.rizma.workers.dev/session"; // absolute Worker endpoint (POST is supported here)
+
+    // Realtime state
+    let pc = null;           // RTCPeerConnection
+    let dc = null;           // RTCDataChannel for events
+    let micStream = null;    // MediaStream from getUserMedia
+    let isConnected = false; // WebRTC session status
+    let isConnecting = false; // prevents duplicate offers / multiple /session calls
+
+    // Buffers for streaming transcripts
+    let assistantBuf = "";
+
+    // --- Debug: remote audio & stats ---
+    function attachRemoteAudioDebug(el) {
+      if (!el) return;
+      el.addEventListener('play', () => console.log('remoteAudio: play'));
+      el.addEventListener('pause', () => console.log('remoteAudio: pause'));
+      el.addEventListener('loadedmetadata', () => console.log('remoteAudio: loadedmetadata'));
+    }
+    async function startRtpStats(pc) {
+      try {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+        const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'audio');
+        setInterval(async () => {
+          if (sender) {
+            const stats = await sender.getStats();
+            for (const r of stats.values()) {
+              if (r.type === 'outbound-rtp') console.log('RTP out bytesSent:', r.bytesSent);
+            }
+          }
+          if (receiver) {
+            const stats = await receiver.getStats();
+            for (const r of stats.values()) {
+              if (r.type === 'inbound-rtp') console.log('RTP in bytesReceived:', r.bytesReceived);
+            }
+          }
+        }, 2000);
+      } catch (e) { console.warn('stats error', e); }
+    }
+    // Send a text item then ask for a response (useful to verify DC + TTS path even if VAD fails)
+    function sendTextAndRespond(text) {
+      if (!dc || dc.readyState !== 'open') return;
+      try {
+        // New schema: item must be a "message" with role and content[]
+        dc.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text }
+            ]
+          }
+        }));
+        // Ask the model to produce a response (audio+text as per session voice)
+        dc.send(JSON.stringify({
+          type: 'response.create',
+          response: { modalities: ['audio', 'text'] }
+        }));
+        console.log('Sent text+response.create');
+      } catch (e) { console.warn('sendTextAndRespond failed', e); }
+    }
+
+    // ---- HTTP fallback: chat + TTS when realtime responds with server_error ----
+    async function httpLLM(messages) {
+      const r = await fetch(`${API_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          max_tokens: 220,
+          temperature: 0.7,
+          messages
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error?.message || `chat fail ${r.status}`);
+      return j?.choices?.[0]?.message?.content || "";
+    }
+
+    async function httpTTS(text) {
+      const r = await fetch(`${API_BASE}/audio/speech`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "tts-1",
+          voice: "marin",
+          input: text,
+          format: "mp3"
+        })
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`tts fail ${r.status}: ${t.slice(0, 200)}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.getElementById('fallbackAudio');
+      a.src = url;
+      a.style.display = 'block';
+      await a.play().catch(() => { });
+      return url;
+    }
+
+    async function fallbackReplyFromHTTP() {
+      try {
+        statusEl && (statusEl.textContent = 'Fallback: thinking...');
+        // Use rolling memory as context; last user message is already appended
+        const msgs = buildMessages(/* userText unused; memory already contains it */);
+        const text = (await httpLLM(msgs)).trim();
+        if (text) {
+          addMessage(text, 'elena');
+          memory.messages.push({ role: 'assistant', content: text });
+          saveMemory();
+          await httpTTS(text);
+        }
+        statusEl && (statusEl.textContent = 'Idle');
+      } catch (e) {
+        console.error('HTTP fallback failed:', e);
+        statusEl && (statusEl.textContent = 'Error');
+      }
+    }
+    // ---- end HTTP fallback ----
+
     // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-    const SYSTEM_PROMPT = "You are Elena, an empathetic assistant. The length of your response should match the topic and the need for details. No need for fluff but provide in-depth response or guidance if needed. Validate feelings, avoid diagnoses or crisis guidance. Be concise and warm.";
+    const SYSTEM_PROMPT = "You are Elena, an empathetic supportive assistant. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
 
     const MEMORY_KEY = "rizma_memory_v1";
     const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12 messages)
@@ -62,7 +204,7 @@
     };
 
     function saveMemory() {
-      try { localStorage.setItem(MEMORY_KEY, JSON.stringify({ summary: memory.summary, messages: memory.messages })); } catch {}
+      try { localStorage.setItem(MEMORY_KEY, JSON.stringify({ summary: memory.summary, messages: memory.messages })); } catch { }
     }
 
     function loadMemory() {
@@ -72,7 +214,7 @@
         const data = JSON.parse(raw);
         memory.summary = data.summary || "";
         memory.messages = Array.isArray(data.messages) ? data.messages : [];
-      } catch {}
+      } catch { }
     }
 
     function clearMemory() {
@@ -83,6 +225,7 @@
       hasSessionStarted = false;
       setBtnRecordingUI(false);
       if (statusEl) statusEl.textContent = "Idle";
+      disconnectRealtime();
     }
 
     function renderHistory() {
@@ -145,64 +288,38 @@
     // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
     function setBtnRecordingUI(rec) {
       btn.setAttribute('aria-pressed', rec ? 'true' : 'false');
-      const label = rec ? 'Stop Recording' : (hasSessionStarted ? 'Start Recording' : 'Start Voice Session');
+      // When not connected yet, show Start Voice Session
+      let label;
+      if (!isConnected) label = 'Start Voice Session';
+      else label = rec ? 'Stop Recording' : (hasSessionStarted ? 'Continue Recording' : 'Start Voice Session');
       btn.textContent = label;
-      // subtle state color shift
       btn.style.background = rec ? '#F7C2B0' : '#FBD5C7';
     }
 
-    function isTouchDevice() {
-      return (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (navigator.maxTouchPoints > 0);
-    }
-
-    function handleClickToggle(e) {
-      e && e.preventDefault();
-      if (!isRecording) {
-        startRec();
-        setBtnRecordingUI(true);
-      } else {
-        stopRec();
-        setBtnRecordingUI(false);
-      }
-    }
-
-    function handleKeyToggle(e) {
-      // Space or Enter toggles on desktop
-      if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
-        e.preventDefault();
-        handleClickToggle(e);
-      }
-    }
-
-    function handlePointerDown(e) {
-      e.preventDefault();
-      if (!isRecording) {
-        startRec();
-        setBtnRecordingUI(true);
-      }
-    }
-
-    function handlePointerUp(e) {
-      e && e.preventDefault();
-      if (isRecording) {
-        stopRec();
-        setBtnRecordingUI(false);
-      }
-    }
-
     function bindControls() {
-      if (isTouchDevice()) {
-        // mobile/tablet: press-and-hold
-        btn.style.touchAction = 'none';
-        btn.addEventListener('pointerdown', handlePointerDown, { passive: false });
-        btn.addEventListener('pointerup', handlePointerUp, { passive: false });
-        btn.addEventListener('pointercancel', handlePointerUp);
-        btn.addEventListener('pointerleave', (e) => { if (e.buttons === 0) handlePointerUp(e); });
-      } else {
-        // desktop: click or keyboard to toggle
-        btn.addEventListener('click', handleClickToggle);
-        document.addEventListener('keydown', handleKeyToggle);
-      }
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!isConnected) {
+          if (isConnecting) return; // Prevent duplicate handshakes
+          await connectRealtime();        // start session & mic
+          setBtnRecordingUI(true);
+        } else {
+          // toggle mic on/off within the live session
+          const track = micStream?.getAudioTracks?.()[0];
+          const nowRec = track ? !track.enabled : false;
+          if (track) track.enabled = nowRec;
+          if (nowRec) hasSessionStarted = true;
+          setBtnRecordingUI(nowRec);
+          statusEl && (statusEl.textContent = nowRec ? 'Listening...' : 'Idle');
+        }
+      });
+      // Accessibility: Space/Enter toggles
+      document.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
+          e.preventDefault();
+          btn.click();
+        }
+      });
     }
     bindControls();
     // --- End adaptive controls ---
@@ -231,122 +348,296 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
-    async function startRec() {
-      if (isRecording) return;
-      if (statusEl) statusEl.textContent = 'Listening...';
+    // --- Response triggering over DataChannel ---
+    let responseRequested = false;
+    function sendResponseCreate(extra = {}) {
+      if (!dc || dc.readyState !== 'open') return;
+      const payload = {
+        type: 'response.create',
+        response: {
+          modalities: ['audio', 'text'],
+          // voice is configured at session level via session.update
+          ...extra
+        }
+      };
+      try { dc.send(JSON.stringify(payload)); }
+      catch (e) { console.warn('response.create send failed', e); }
+    }
+    // --- end response helpers ---
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        // Choose a supported mime
-        let mime = "";
-        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
-        else if (MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
-        else if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) mime = "audio/ogg;codecs=opus";
-        else if (MediaRecorder.isTypeSupported("audio/ogg")) mime = "audio/ogg";
-
-        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-        chunks = [];
-        isRecording = true;
-        recStartedAt = Date.now();
-        hasSessionStarted = true;
-
-        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-
-        mediaRecorder.onstop = async () => {
-          try {
-            const type = mediaRecorder.mimeType || "audio/webm";
-            const ext  = type.includes("ogg") ? "ogg" : "webm";
-            const blob = new Blob(chunks, { type });
-            if (!blob.size) throw new Error("Empty recording blob");
-
-            const file = new File([blob], `input.${ext}`, { type });
-
-            const transcript = await stt(file);
-            addMessage(transcript || '(no speech detected)', 'user');
-            // persist user turn
-            memory.messages.push({ role: 'user', content: transcript || '' });
-            saveMemory();
-            if (statusEl) statusEl.textContent = 'Thinking...';
-
-            const reply = await llm(buildMessages(transcript || ''));
-            addMessage(reply || '', 'elena');
-            // persist assistant turn
-            memory.messages.push({ role: 'assistant', content: reply || '' });
-            saveMemory();
-            // compress old turns if needed
-            await maybeSummarize();
-
-            if (statusEl) statusEl.textContent = 'Replying...';
-            const audioBlob = await tts(reply);
-            const url = URL.createObjectURL(audioBlob);
-            const audio = new Audio(url);
-            await audio.play().catch(e => console.error('Audio play error:', e));
-          } catch (err) {
-            console.error("Pipeline error:", err);
-          } finally {
-            mediaRecorder.stream.getTracks().forEach(t => t.stop());
-            if (statusEl) statusEl.textContent = 'Idle';
-            isRecording = false;
+    // Wait for local ICE gathering to finish before sending SDP (no trickle)
+    function waitForIceGatheringComplete(pc) {
+      if (pc.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise((resolve) => {
+        function check() {
+          if (pc.iceGatheringState === 'complete') {
+            pc.removeEventListener('icegatheringstatechange', check);
+            resolve();
           }
-        };
+        }
+        pc.addEventListener('icegatheringstatechange', check);
+      });
+    }
+    // --- Realtime: WebRTC connection + event handling ---
+    async function getEphemeralKey() {
+      // Your Cloudflare Worker should create an ephemeral session token by POSTing to
+      // https://api.openai.com/v1/realtime/sessions with your server-side API key.
+      // It must return JSON that includes { client_secret: { value } }.
+      const r = await fetch(SESSION_URL, { method: 'POST' });
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`Session POST failed ${r.status}. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
+      }
+      if (!ct.includes('application/json')) {
+        const txt = await r.text();
+        throw new Error(`Session endpoint returned non-JSON. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
+      }
+      const j = await r.json();
+      if (j?.model) console.log('Realtime session model:', j.model);
+      const key = j?.client_secret?.value || j?.client_secret?.secret || j?.client_secret;
+      if (!key) throw new Error(`No ephemeral key in /session response: ${JSON.stringify(j).slice(0, 500)}`);
+      return key;
+    }
 
-        mediaRecorder.start(100); // timeslice so short presses still yield chunks
-      } catch (e) {
-        console.error("getUserMedia error:", e);
-        // revert UI if permission or device fails
-        setBtnRecordingUI(false);
+    async function connectRealtime() {
+      if (isConnected || isConnecting) return;
+      isConnecting = true;
+      statusEl && (statusEl.textContent = 'Connecting...');
+      btn.disabled = true;
+      try {
+        // 1) Get mic
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // 2) Peer connection and remote audio sink
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+        pc.addEventListener('iceconnectionstatechange', () => console.log('ICE:', pc.iceConnectionState));
+        pc.addEventListener('connectionstatechange', () => console.log('PC:', pc.connectionState));
+        pc.addEventListener('signalingstatechange', () => console.log('SIG:', pc.signalingState, 'ICEG:', pc.iceGatheringState));
+        // ICE candidate logging (optional but useful)
+        pc.onicecandidate = (ev) => {
+          if (ev.candidate) console.log('ICE cand:', ev.candidate.type || ev.candidate.candidate);
+        };
+        const remoteAudio = document.getElementById('remoteAudio');
+        pc.ontrack = (e) => {
+          console.log('ontrack:', e.track.kind, 'streams:', e.streams?.length || 0);
+          if (!remoteAudio) return;
+          let ms = remoteAudio.srcObject;
+          if (!(ms instanceof MediaStream)) {
+            ms = new MediaStream();
+            remoteAudio.srcObject = ms;
+          }
+          // Add the track if it's not already present
+          const ids = ms.getTracks().map(t => t.id);
+          if (!ids.includes(e.track.id)) {
+            ms.addTrack(e.track);
+          }
+          // Ensure element is audible and playing
+          remoteAudio.muted = false;
+          remoteAudio.volume = 1.0;
+          remoteAudio.controls = true; // visible for debug
+          remoteAudio.play().catch(err => console.warn('remoteAudio.play failed:', err));
+        };
+        attachRemoteAudioDebug(remoteAudio);
+
+        function wireDataChannel(channel) {
+          if (!channel) return;
+          // if we already have a live DC, ignore extras
+          if (dc && dc.readyState !== 'closed' && dc.readyState !== 'closing') {
+            try { channel.close(); } catch { }
+            return;
+          }
+          dc = channel;
+          dc.onmessage = async (e) => {
+            try { await handleServerEvent(JSON.parse(e.data)); } catch (err) { console.warn('DC parse error', err, e.data); }
+          };
+          dc.onopen = () => {
+            console.log('DC open');
+            const update = {
+              type: 'session.update',
+              session: {
+                instructions: SYSTEM_PROMPT,
+                voice: 'alloy',
+                modalities: ['audio', 'text'],
+                turn_detection: { type: 'server_vad' }
+              }
+            };
+            dc.send(JSON.stringify(update));
+            // DEBUG: force a hello so we know audio output is working
+            setTimeout(() => sendTextAndRespond("Say only: hello, this is Elena."), 300);
+          };
+          dc.onclose = () => console.log('DC closed');
+        }
+        pc.ondatachannel = (e) => wireDataChannel(e.channel);
+
+        // Ensure an audio m= section for send & recv
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
+
+        // 3) Data channel for events (create one proactively; server may also open one)
+        wireDataChannel(pc.createDataChannel('oai-events'));
+
+        // 4) Add mic track (enabled initially)
+        micStream.getAudioTracks().forEach(t => { t.enabled = true; pc.addTrack(t, micStream); });
+
+        // 5) Create SDP offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        // Ensure ICE candidates are included in our SDP (no trickle)
+        await waitForIceGatheringComplete(pc);
+        const localSdp = pc.localDescription.sdp;
+
+        // 6) Exchange SDP with OpenAI Realtime
+        const EPHEMERAL = await getEphemeralKey();
+        // Use the model bound to the ephemeral session (avoid client/server model mismatch)
+        const url = "https://api.openai.com/v1/realtime?model=gpt-realtime";
+        const sdpRes = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${EPHEMERAL}`,
+            'Content-Type': 'application/sdp'
+          },
+          body: localSdp
+        });
+        if (!sdpRes.ok) throw new Error(await sdpRes.text());
+        const answer = await sdpRes.text();
+        // Only set remote description when we're in the right signaling state
+        if (pc.signalingState === 'have-local-offer') {
+          await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        } else {
+          console.warn('Skipping setRemoteDescription; signalingState=', pc.signalingState);
+        }
+        // Debug: log receiver tracks after answer
+        pc.getReceivers().forEach(r => {
+          if (r.track) console.log('receiver track:', r.track.kind, r.track.readyState);
+        });
+        // Nudge remote audio to start (may need explicit play after user gesture)
+        if (remoteAudio && remoteAudio.paused) {
+          try { await remoteAudio.play(); } catch (e) { /* autoplay may be blocked until audio arrives */ }
+        }
+        startRtpStats(pc);
+
+        isConnected = true;
+        isRecording = true;
+        hasSessionStarted = true;
+        statusEl && (statusEl.textContent = 'Listening...');
+        isConnecting = false;
+        btn.disabled = false;
+      } finally {
+        isConnecting = false;
+        btn.disabled = false;
       }
     }
 
-    function stopRec() {
-      if (!isRecording || !mediaRecorder) return;
-      const MIN_MS = 300;
-      const elapsed = Date.now() - recStartedAt;
-      const wait = Math.max(0, MIN_MS - elapsed);
-      setTimeout(() => {
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-          mediaRecorder.stop();
+    function disconnectRealtime() {
+      try {
+        pc && pc.close();
+      } catch { }
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      pc = null; dc = null; micStream = null;
+      isConnected = false; isRecording = false;
+      setBtnRecordingUI(false);
+      statusEl && (statusEl.textContent = 'Idle');
+    }
+
+    async function handleServerEvent(evt) {
+      console.debug('RT event', evt.type, evt);
+      // Common realtime events we care about:
+      // - input_audio_buffer.speech_started / speech_stopped
+      // - conversation.item.input_audio_transcription.completed (user transcript)
+      // - response.audio_transcript.delta / .done (assistant transcript)
+      // - response.done (assistant finalization; often includes full transcript)
+      switch (evt.type) {
+        case 'input_audio_buffer.speech_started':
+          statusEl && (statusEl.textContent = 'Listening...');
+          responseRequested = false; // new turn started
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          statusEl && (statusEl.textContent = 'Thinking...');
+          if (!responseRequested) {
+            sendResponseCreate();
+            responseRequested = true;
+          }
+          break;
+        case 'conversation.item.input_audio_transcription.completed': {
+          const text = evt?.transcript || evt?.text || evt?.item?.input_audio_transcription?.text || '';
+          if (text?.trim()) {
+            addMessage(text.trim(), 'user');
+            memory.messages.push({ role: 'user', content: text.trim() });
+            saveMemory();
+          }
+          if (!responseRequested) {
+            sendResponseCreate();
+            responseRequested = true;
+          }
+          break;
         }
-      }, wait);
+        case 'response.audio_transcript.delta': {
+          const d = evt?.delta || '';
+          if (d) assistantBuf += d;
+          break;
+        }
+        case 'response.audio_transcript.done':
+        case 'response.done': {
+          // If server reports failure, fall back to HTTP pipeline
+          /*
+          const status = evt?.response?.status;
+          if (status === 'failed') {
+            console.error('Realtime response failed:', evt?.response?.status_details || evt);
+            await fallbackReplyFromHTTP();
+            const track = micStream?.getAudioTracks?.()[0];
+            if (track) track.enabled = true;
+            setBtnRecordingUI(true);
+            break;
+          }
+          */
+          // Success path: use transcript if present; else buffered deltas
+          const explicit = evt?.transcript || evt?.response?.output_text || '';
+          const finalText = (explicit && explicit.trim()) || assistantBuf.trim();
+          if (finalText) {
+            addMessage(finalText, 'elena');
+            memory.messages.push({ role: 'assistant', content: finalText });
+            saveMemory();
+            assistantBuf = '';
+          }
+          statusEl && (statusEl.textContent = 'Idle');
+          const track = micStream?.getAudioTracks?.()[0];
+          if (track) track.enabled = true;
+          setBtnRecordingUI(true);
+          break;
+        }
+        case 'response.output_text.delta': {
+          const d = evt?.delta || '';
+          if (d) assistantBuf += d;
+          break;
+        }
+        case 'response.output_text.done': {
+          const finalText = (evt?.text || '').trim();
+          if (finalText) {
+            addMessage(finalText, 'elena');
+            memory.messages.push({ role: 'assistant', content: finalText });
+            saveMemory();
+            assistantBuf = '';
+          }
+          statusEl && (statusEl.textContent = 'Idle');
+          const track = micStream?.getAudioTracks?.()[0];
+          if (track) track.enabled = true;
+          setBtnRecordingUI(true);
+          break;
+        }
+        case 'error': {
+          console.error('Realtime error:', evt);
+          statusEl && (statusEl.textContent = 'Error');
+          break;
+        }
+        default:
+          // Other events can be logged for debugging if needed
+          console.debug('RT other', evt);
+          break;
+      }
     }
-
-    async function stt(file) {
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      fd.append("model", "gpt-4o-transcribe"); // or "whisper-1"
-      fd.append("language", "en");
-      const r = await fetch(`${API_BASE}/audio/transcriptions`, { method: "POST", body: fd });
-      if (!r.ok) { throw new Error(await r.text()); }
-      const j = await r.json();
-      return j.text || "";
-    }
-
-    async function llm(messages) {
-      const r = await fetch(`${API_BASE}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-5", // "gpt-4o"
-          messages
-          // max_completion_tokens: 1000
-        })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json();
-      return j.choices?.[0]?.message?.content || "";
-    }
-
-    async function tts(text) {
-      const r = await fetch(`${API_BASE}/audio/speech`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
-        body: JSON.stringify({ model: "tts-1-hd-1106", voice: "alloy", input: text, format: "mp3" })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const buf = await r.arrayBuffer();
-      return new Blob([buf], { type: "audio/mpeg" });
-    }
+    // --- End Realtime: WebRTC connection + event handling ---
 
     // Reset Session clears memory and UI
     const resetBtn = document.getElementById('reset');
@@ -357,4 +648,5 @@
     }
   </script>
 </body>
- </html>
+
+</html>
