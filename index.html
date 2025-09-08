@@ -109,6 +109,7 @@
     // Realtime (WebRTC) constants
     const REALTIME_MODEL = "gpt-realtime"; // per OpenAI Realtime GA; see docs
     const SESSION_URL = "https://rizma-proxy.rizma.workers.dev/session"; // absolute Worker endpoint (POST is supported here)
+    const SERVER_VAD = true; // matches session.update turn_detection
 
     // Realtime state
     let pc = null;           // RTCPeerConnection
@@ -619,7 +620,7 @@
           break;
         case 'input_audio_buffer.speech_stopped':
           statusEl && (statusEl.textContent = 'Thinking...');
-          if (!responseRequested) {
+          if (!SERVER_VAD && !responseRequested) {
             sendResponseCreate();
             responseRequested = true;
           }
@@ -631,7 +632,7 @@
             memory.messages.push({ role: 'user', content: text.trim() });
             saveMemory();
           }
-          if (!responseRequested) {
+          if (!SERVER_VAD && !responseRequested) {
             sendResponseCreate();
             responseRequested = true;
           }
