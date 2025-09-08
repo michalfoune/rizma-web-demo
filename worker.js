@@ -21,7 +21,7 @@ export default {
         let body = {};
         try { body = await req.json(); } catch {}
         const model = body.model || "gpt-realtime"; // ensure this matches your project allowlist
-        const voice = body.voice || "alloy";
+        const voice = body.voice || "marin";
         const modalities = body.modalities || ["audio", "text"];
         const turn_detection = body.turn_detection || { type: "server_vad" };
 

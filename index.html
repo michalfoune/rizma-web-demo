@@ -27,22 +27,58 @@
     <div style="font-size:28px; font-weight:700;">Elena</div>
     <div style="font-size:16px; color:#6B6B6B; text-align:center; max-width:520px;">Helps with homework and answers
       questions.</div>
-    <button id="hold" aria-pressed="false"
-      style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
-      Start Voice Session
+    <button id="hold" aria-pressed="false" aria-label="Start Voice Session"
+      style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06); display:none;">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" style="display:block;"
+        fill="currentColor">
+        <rect x="2" y="12" width="4" height="8" rx="2"></rect>
+        <rect x="8" y="8" width="4" height="16" rx="2"></rect>
+        <rect x="14" y="4" width="4" height="24" rx="2"></rect>
+        <rect x="20" y="8" width="4" height="16" rx="2"></rect>
+        <rect x="26" y="12" width="4" height="8" rx="2"></rect>
+      </svg>
     </button>
   </section>
 
-  <audio id="remoteAudio" autoplay playsinline controls style="width:min(760px, calc(100% - 48px));"></audio>
+  <audio id="remoteAudio" autoplay playsinline style="display:none;"></audio>
   <!-- Fallback audio for HTTP TTS when Realtime fails -->
   <audio id="fallbackAudio" playsinline style="display:none;"></audio>
 
   <!-- Conversation Panel -->
   <section id="panel"
-    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04);">
+    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04); display:none;">
+    <div style="display:flex; justify-content:flex-end;">
+      <button id="endSession" aria-label="End session" title="End session"
+        style="border:none; background:transparent; font-size:20px; line-height:1; padding:4px 6px; cursor:pointer; color:#6B6B6B;">
+        &times;
+      </button>
+    </div>
     <div id="status" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Idle</div>
     <div id="chat"
       style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
+  </section>
+
+  <!-- Chat composer with waveform mic, button hidden above -->
+  <section id="composer"
+    style="width:min(760px, calc(100% - 48px)); display:flex; align-items:center; gap:12px; margin-top:6px;">
+    <button id="composerPlus" aria-label="Add" title="Add"
+      style="width:36px; height:36px; border-radius:18px; background:#F5F5F5; border:none; color:#0E0E10; font-size:22px; line-height:36px; display:flex; align-items:center; justify-content:center;">
+      +
+    </button>
+    <div id="composerInput"
+      style="flex:1; height:44px; border-radius:22px; background:#F5F5F5; color:#8B8B8B; display:flex; align-items:center; padding:0 14px; font-size:16px;">
+      Ask anything
+    </div>
+    <button id="micFab" aria-label="Start Voice Session" title="Start Voice Session"
+      style="width:44px; height:44px; border:none; border-radius:22px; background:#FBD5C7; color:#0E0E10; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true" focusable="false" fill="currentColor">
+        <rect x="2" y="12" width="4" height="8" rx="2"></rect>
+        <rect x="8" y="8" width="4" height="16" rx="2"></rect>
+        <rect x="14" y="4" width="4" height="24" rx="2"></rect>
+        <rect x="20" y="8" width="4" height="16" rx="2"></rect>
+        <rect x="26" y="12" width="4" height="8" rx="2"></rect>
+      </svg>
+    </button>
   </section>
 
   <!-- Footer -->
@@ -65,6 +101,10 @@
     const btn = document.getElementById('hold');
     const statusEl = document.getElementById('status');
     const chatEl = document.getElementById('chat');
+    const micFab = document.getElementById('micFab');
+    const panelEl = document.getElementById('panel');
+    const composerEl = document.getElementById('composer');
+    const endBtn = document.getElementById('endSession');
 
     // Realtime (WebRTC) constants
     const REALTIME_MODEL = "gpt-realtime"; // per OpenAI Realtime GA; see docs
@@ -167,7 +207,6 @@
       const url = URL.createObjectURL(blob);
       const a = document.getElementById('fallbackAudio');
       a.src = url;
-      a.style.display = 'block';
       await a.play().catch(() => { });
       return url;
     }
@@ -288,12 +327,19 @@
     // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
     function setBtnRecordingUI(rec) {
       btn.setAttribute('aria-pressed', rec ? 'true' : 'false');
-      // When not connected yet, show Start Voice Session
+      // Compute state label for screen readers and tooltip
       let label;
       if (!isConnected) label = 'Start Voice Session';
       else label = rec ? 'Stop Recording' : (hasSessionStarted ? 'Continue Recording' : 'Start Voice Session');
-      btn.textContent = label;
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+      // Keep icons; just tint backgrounds
       btn.style.background = rec ? '#F7C2B0' : '#FBD5C7';
+      if (micFab) {
+        micFab.setAttribute('aria-label', label);
+        micFab.title = label;
+        micFab.style.background = rec ? '#F7C2B0' : '#FBD5C7';
+      }
     }
 
     function bindControls() {
@@ -313,6 +359,12 @@
           statusEl && (statusEl.textContent = nowRec ? 'Listening...' : 'Idle');
         }
       });
+      if (micFab) {
+        micFab.addEventListener('click', (e) => {
+          e.preventDefault();
+          btn.click(); // delegate to hidden primary handler
+        });
+      }
       // Accessibility: Space/Enter toggles
       document.addEventListener('keydown', (e) => {
         if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
@@ -320,6 +372,14 @@
           btn.click();
         }
       });
+      if (endBtn) {
+        endBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          disconnectRealtime();
+          if (panelEl) panelEl.style.display = 'none';
+          if (composerEl) composerEl.style.display = 'flex';
+        });
+      }
     }
     bindControls();
     // --- End adaptive controls ---
@@ -437,7 +497,7 @@
           // Ensure element is audible and playing
           remoteAudio.muted = false;
           remoteAudio.volume = 1.0;
-          remoteAudio.controls = true; // visible for debug
+          remoteAudio.controls = true; // turn on for debugging
           remoteAudio.play().catch(err => console.warn('remoteAudio.play failed:', err));
         };
         attachRemoteAudioDebug(remoteAudio);
@@ -459,7 +519,7 @@
               type: 'session.update',
               session: {
                 instructions: SYSTEM_PROMPT,
-                voice: 'alloy',
+                voice: 'marin',
                 modalities: ['audio', 'text'],
                 turn_detection: { type: 'server_vad' }
               }
@@ -522,6 +582,8 @@
         isRecording = true;
         hasSessionStarted = true;
         statusEl && (statusEl.textContent = 'Listening...');
+        if (panelEl) panelEl.style.display = 'block';
+        if (composerEl) composerEl.style.display = 'none';
         isConnecting = false;
         btn.disabled = false;
       } finally {
@@ -539,6 +601,8 @@
       isConnected = false; isRecording = false;
       setBtnRecordingUI(false);
       statusEl && (statusEl.textContent = 'Idle');
+      if (panelEl) panelEl.style.display = 'none';
+      if (composerEl) composerEl.style.display = 'flex';
     }
 
     async function handleServerEvent(evt) {
