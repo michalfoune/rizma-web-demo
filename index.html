@@ -5,6 +5,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>rizma</title>
+  <style>
+    :root { --container-w: min(760px, calc(100% - 48px)); }
+    .container { width: var(--container-w); margin: 0 auto; box-sizing: border-box; }
+    /* End (×) button: filled circle, matches mic size */
+    #endSession {
+      width: 44px; height: 44px; border-radius: 22px; /* match micFab */
+      display: flex; align-items: center; justify-content: center;
+      background: #F5F5F5; color: #0E0E10; /* match waveform gray */
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      transition: background-color .15s ease, transform .04s ease;
+    }
+    #endSession:hover { background: #FBD5C7; }            /* peach on hover (same as mic) */
+    #endSession:active { background: #F7C2B0; transform: translateY(0.5px); }
+    #micFab { cursor: pointer; background: #F5F5F5; transition: background-color .15s ease; }
+    #micFab:hover { background: #FBD5C7; }
+  </style>
 </head>
 
 <body
@@ -20,8 +36,8 @@
   </header>
 
   <!-- Therapist Card -->
-  <section
-    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
+  <section class="container"
+    style="width:var(--container-w); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
     <img src="rizma-doc-3-elena_cropped.png" alt="Elena"
       style="width:120px; height:120px; border-radius:60px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.06);" />
     <div style="font-size:28px; font-weight:700;">Elena</div>
@@ -45,11 +61,11 @@
   <audio id="fallbackAudio" playsinline style="display:none;"></audio>
 
   <!-- Conversation Panel -->
-  <section id="panel"
-    style="width:min(760px, calc(100% - 48px)); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04); display:none;">
+  <section id="panel" class="container"
+    style="width:var(--container-w); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04); display:none;">
     <div style="display:flex; justify-content:flex-end;">
       <button id="endSession" aria-label="End session" title="End session"
-        style="border:none; background:transparent; font-size:20px; line-height:1; padding:4px 6px; cursor:pointer; color:#6B6B6B;">
+        style="border:none; font-size:22px; line-height:1; padding:0; cursor:pointer; color:#0E0E10;">
         &times;
       </button>
     </div>
@@ -59,8 +75,8 @@
   </section>
 
   <!-- Chat composer with waveform mic, button hidden above -->
-  <section id="composer"
-    style="width:min(760px, calc(100% - 48px)); display:flex; align-items:center; gap:12px; margin-top:6px;">
+  <section id="composer" class="container"
+    style="width:var(--container-w); display:flex; align-items:center; gap:12px; margin-top:6px;">
     <button id="composerPlus" aria-label="Add" title="Add"
       style="width:36px; height:36px; border-radius:18px; background:#F5F5F5; border:none; color:#0E0E10; font-size:22px; line-height:36px; display:flex; align-items:center; justify-content:center;">
       +
@@ -70,7 +86,7 @@
       Ask anything
     </div>
     <button id="micFab" aria-label="Start Voice Session" title="Start Voice Session"
-      style="width:44px; height:44px; border:none; border-radius:22px; background:#FBD5C7; color:#0E0E10; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+      style="width:44px; height:44px; border:none; border-radius:22px; color:#0E0E10; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
       <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true" focusable="false" fill="currentColor">
         <rect x="2" y="12" width="4" height="8" rx="2"></rect>
         <rect x="8" y="8" width="4" height="16" rx="2"></rect>
@@ -339,7 +355,12 @@
       if (micFab) {
         micFab.setAttribute('aria-label', label);
         micFab.title = label;
-        micFab.style.background = rec ? '#F7C2B0' : '#FBD5C7';
+        // When recording, force peach; when idle, let CSS control default gray and hover
+        if (rec) {
+          micFab.style.background = '#F7C2B0';
+        } else {
+          micFab.style.background = '';
+        }
       }
     }
 
