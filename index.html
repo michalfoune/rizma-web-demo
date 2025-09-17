@@ -447,17 +447,22 @@
     }
     // --- end response helpers ---
 
-    // Wait for local ICE gathering to finish before sending SDP (no trickle)
-    function waitForIceGatheringComplete(pc) {
-      if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    // Wait for local ICE gathering to finish before sending SDP (no trickle), with timeout
+    function waitForIceGatheringComplete(pc, timeoutMs = 3000) {
+      if (pc.iceGatheringState === 'complete') return Promise.resolve('complete');
       return new Promise((resolve) => {
-        function check() {
+        const onChange = () => {
           if (pc.iceGatheringState === 'complete') {
-            pc.removeEventListener('icegatheringstatechange', check);
-            resolve();
+            pc.removeEventListener('icegatheringstatechange', onChange);
+            clearTimeout(t);
+            resolve('complete');
           }
-        }
-        pc.addEventListener('icegatheringstatechange', check);
+        };
+        const t = setTimeout(() => {
+          pc.removeEventListener('icegatheringstatechange', onChange);
+          resolve('timeout'); // proceed with whatever we have
+        }, timeoutMs);
+        pc.addEventListener('icegatheringstatechange', onChange);
       });
     }
     // --- Realtime: WebRTC connection + event handling ---
@@ -493,8 +498,17 @@
 
         // 2) Peer connection and remote audio sink
         pc = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ],
+          iceCandidatePoolSize: 1
         });
+        // Start fetching the ephemeral key in parallel to ICE/mic to shave seconds
+        const ephemeralPromise = getEphemeralKey();
         pc.addEventListener('iceconnectionstatechange', () => console.log('ICE:', pc.iceConnectionState));
         pc.addEventListener('connectionstatechange', () => console.log('PC:', pc.connectionState));
         pc.addEventListener('signalingstatechange', () => console.log('SIG:', pc.signalingState, 'ICEG:', pc.iceGatheringState));
@@ -567,11 +581,12 @@
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         // Ensure ICE candidates are included in our SDP (no trickle)
-        await waitForIceGatheringComplete(pc);
+        const iceResult = await waitForIceGatheringComplete(pc, 3000); // don't block forever
+        console.log('ICE gathering result:', iceResult);
         const localSdp = pc.localDescription.sdp;
 
         // 6) Exchange SDP with OpenAI Realtime
-        const EPHEMERAL = await getEphemeralKey();
+        const EPHEMERAL = await ephemeralPromise;
         // Use the model bound to the ephemeral session (avoid client/server model mismatch)
         const url = "https://api.openai.com/v1/realtime?model=gpt-realtime";
         const sdpRes = await fetch(url, {
