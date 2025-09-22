@@ -2,7 +2,8 @@ import { state } from './state/appState';
 import { memory, saveMemory, loadMemory, clearMemory } from './state/memory';
 import { createPeerConnection, waitForIce } from './rtc/connection';
 import { getEl, setText, setVisible, onDomReady } from './ui/dom';
-import { bindControls, setBtnRecordingUI, setStatus, showSessionUI } from './ui/controls';
+import { bindControls, setBtnRecordingUI, setStatus } from './ui/controls';
+import { showSessionUI } from './ui/dom';
 import { addMessage, renderHistory, clearChat } from './ui/chatView';
 import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/signaling';
 import { attachRemoteAudio } from './rtc/audio';
@@ -12,25 +13,25 @@ import { httpLLM, httpTTS } from './api/openaiHttp';
 
 // Logger scopes & defaults
 if ((import.meta as any)?.env?.MODE === 'development') setLevel('debug');
-const uiLog   = createLogger('ui');
-const rtcLog  = createLogger('rtc');
-const pcLog   = rtcLog.child('pc');
-const dcLog   = rtcLog.child('dc');
+const uiLog = createLogger('ui');
+const rtcLog = createLogger('rtc');
+const pcLog = rtcLog.child('pc');
+const dcLog = rtcLog.child('dc');
 const httpLog = rtcLog.child('http');
-const evtLog  = rtcLog.child('evt');
+const evtLog = rtcLog.child('evt');
 
 // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
 const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
 
 let remoteAudioCleanup: (() => void) | null = null;
 
-const btn = getEl('hold');
-const statusEl = document.getElementById('status');
-const chatEl = document.getElementById('chat');
-const micFab = document.getElementById('micFab');
-const panelEl = document.getElementById('panel');
-const composerEl = document.getElementById('composer');
-const endBtn = document.getElementById('endSession');
+const btn = getEl('micFab') as HTMLButtonElement | null;
+const statusEl = getEl('status');
+const chatEl = getEl('chat');
+const micFab = getEl('micFab');
+const panelEl = getEl('panel');
+const composerEl = getEl('composer');
+const endBtn = getEl('endSession');
 
 // Realtime (WebRTC) constants
 const REALTIME_MODEL = "gpt-realtime"; // per OpenAI Realtime GA; see docs
@@ -86,7 +87,6 @@ renderHistory(memory);
 bindControls({
     onConnect: async () => {
         await connectRealtime();            // your existing function
-        showSessionUI(true);
         state.isRecording = true;           // you’ll flip this in your mic toggle too
         setStatus('Listening...');
     },
@@ -106,6 +106,11 @@ bindControls({
 });
 // --- End adaptive controls ---
 
+// Hide session UI initially
+onDomReady(() => {
+    showSessionUI(false);   // hide panel, show composer (flex)
+});
+
 // --- Response triggering over DataChannel ---
 let responseRequested = false;
 
@@ -120,12 +125,12 @@ async function getEphemeralKey() {
     httpLog.info('session POST %d %s', r.status, ct);
     if (!r.ok) {
         const txt = await r.text();
-        httpLog.error('session failed %d: %s', r.status, txt.slice(0,200));
+        httpLog.error('session failed %d: %s', r.status, txt.slice(0, 200));
         throw new Error(`Session POST failed ${r.status}. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
     }
     if (!ct.includes('application/json')) {
         const txt = await r.text();
-        httpLog.warn('session non-JSON: %s', txt.slice(0,200));
+        httpLog.warn('session non-JSON: %s', txt.slice(0, 200));
         throw new Error(`Session endpoint returned non-JSON. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
     }
     // Body may contain model + client_secret
@@ -141,7 +146,7 @@ async function connectRealtime() {
     if (state.isConnected || state.isConnecting) return;
     state.isConnecting = true;
     statusEl && (statusEl.textContent = 'Connecting...');
-    btn.disabled = true;
+    btn && (btn.disabled = true);
 
     rtcLog.group('connect');
     uiLog.info('Connect requested');
@@ -156,9 +161,30 @@ async function connectRealtime() {
                 onTrack: (e) => {
                     pcLog.debug('ontrack %s streams=%d', e.track.kind, e.streams?.length || 0);
                 },
-                onDataChannel: (ch) => { dcLog.info('remote datachannel'); wireDataChannel(ch, handleServerEvent); },
+                onDataChannel: (ch) => {
+                    dcLog.info('remote datachannel');
+                    wireDataChannel(ch, handleServerEvent, {
+                        instructions: SYSTEM_PROMPT,
+                        voice: 'marin',
+                        modalities: ['audio', 'text'],
+                        useServerVAD: SERVER_VAD,
+                        onOpen: () => {
+                            showSessionUI(true);
+                            setBtnRecordingUI(true);
+                            setStatus('Listening...');
+                        }
+                    });
+                },
                 onIceCandidate: (c) => pcLog.debug('ICE cand %s', c.type || c.candidate),
-                onState: (pc) => pcLog.info('state sig=%s ice=%s pc=%s', pc.signalingState, pc.iceConnectionState, pc.connectionState)
+                onState: (pc) => {
+                    pcLog.info('state sig=%s ice=%s pc=%s', pc.signalingState, pc.iceConnectionState, pc.connectionState);
+                    if (pc.connectionState === 'connected') {
+                        uiLog.info('PC connected → showing panel');
+                        showSessionUI(true);
+                        setBtnRecordingUI(true);
+                        setStatus('Listening...');
+                    }
+                }
             }
         );
         const pc = state.pc!;
@@ -174,7 +200,17 @@ async function connectRealtime() {
 
         // Media + data
         pc.addTransceiver('audio', { direction: 'sendrecv' });
-        wireDataChannel(pc.createDataChannel('oai-events'), handleServerEvent);
+        wireDataChannel(pc.createDataChannel('oai-events'), handleServerEvent, {
+            instructions: SYSTEM_PROMPT,
+            voice: 'marin',
+            modalities: ['audio', 'text'],
+            useServerVAD: SERVER_VAD,
+            onOpen: () => {
+                showSessionUI(true);
+                setBtnRecordingUI(true);
+                setStatus('Listening...');
+            }
+        });
         state.micStream.getAudioTracks().forEach(t => { t.enabled = true; pc.addTrack(t, state.micStream!); });
 
         // Offer + bounded ICE wait
@@ -199,7 +235,7 @@ async function connectRealtime() {
         httpLog.timeEnd('sdp-post');
         if (!sdpRes.ok) {
             const body = await sdpRes.text();
-            httpLog.error('SDP POST failed %d %s', sdpRes.status, body.slice(0,200));
+            httpLog.error('SDP POST failed %d %s', sdpRes.status, body.slice(0, 200));
             throw new Error(body);
         }
         const answer = await sdpRes.text();
@@ -221,10 +257,17 @@ async function connectRealtime() {
         }
 
         // (rest of your success path: startRtpStats, set UI flags, etc.)
-    } finally {
+    }
+    catch (err) {
+        setStatus('Idle');
+        setBtnRecordingUI(false);
+        showSessionUI(false);           // ensure we don't leave the panel open
+        throw err;
+    }
+    finally {
         rtcLog.groupEnd();
         state.isConnecting = false;
-        btn.disabled = false;
+        btn && (btn.disabled = false);;
     }
 }
 
@@ -342,10 +385,21 @@ async function handleServerEvent(evt) {
 }
 // --- End Realtime: WebRTC connection + event handling ---
 
+function resetSession() {
+    try { disconnectRealtime(); } catch {}
+    clearMemory();
+    clearChat();
+    renderHistory(memory);
+    setStatus('Idle');
+    setBtnRecordingUI(false);
+    showSessionUI(false);
+}
+
 // Reset Session clears memory and UI
 const resetBtn = getEl('reset');
 if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-        clearMemory();
+    resetBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        resetSession();
     });
 }

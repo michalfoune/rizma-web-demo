@@ -61,6 +61,28 @@ export function setVisible(target: keyof IdMap | Element, visible: boolean, disp
   (el as HTMLElement).style.display = visible ? display : 'none';
 }
 
+/** UI toggles when the session starts/stops **/
+export function showSessionUI(show: boolean) {
+  const panel = document.getElementById('panel');
+  const composer = document.getElementById('composer');
+  if (!panel || !composer) {
+    console.warn('showSessionUI: missing #panel or #composer');
+    return;
+  }
+  // Clear any stale inline display set by older code
+  panel.style.removeProperty('display');
+  composer.style.removeProperty('display');
+
+  // Toggle visibility with classes so CSS controls layout
+  // (panel is block by default; composer is flex by CSS)
+  panel.classList.toggle('hidden', !show);
+  composer.classList.toggle('hidden', show);
+
+  // Accessibility
+  panel.setAttribute('aria-hidden', (!show).toString());
+  composer.setAttribute('aria-hidden', show.toString());
+}
+
 /** Run a callback when DOM is ready (idempotent). */
 export function onDomReady(fn: () => void) {
   if (document.readyState === 'loading') {

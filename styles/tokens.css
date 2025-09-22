@@ -1,0 +1,40 @@
+/* Design tokens for rizma */
+:root{
+  /* brand palette */
+  --rz-white: #FFFFFF;
+  --rz-peach: #FBD5C7;
+  --rz-black: #0E0E10;
+
+  /* neutrals */
+  --rz-gray-25:  #FAFAFA;
+  --rz-gray-50:  #F6F6F7;
+  --rz-gray-100: #EFEFF1;
+  --rz-gray-200: #E7E7EA;
+  --rz-gray-300: #D8D8DD;
+  --rz-gray-600: #4B5563;
+
+  /* radii & elevation */
+  --rz-radius:    12px;
+  --rz-radius-lg: 16px;
+  --rz-shadow:       0 12px 32px rgba(14,14,16,.08);
+  --rz-shadow-soft:  0  6px 20px rgba(14,14,16,.06);
+
+  /* typography */
+  --rz-font: "SF Pro Text","SF Pro","Inter",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";
+  --rz-font-mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+
+  /* spacing */
+  --rz-gap-1: 6px;
+  --rz-gap-2: 10px;
+  --rz-gap-3: 16px;
+  --rz-gap-4: 20px;
+  --rz-gap-5: 28px;
+
+  /* layout widths */
+  --rz-panel-max: 860px;
+  --rz-card-max:  720px;
+
+  /* motion */
+  --rz-trans-fast: 120ms ease;
+  --rz-trans-med:  200ms ease;
+}

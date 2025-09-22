@@ -5,54 +5,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>rizma</title>
-  <style>
-    :root { --container-w: min(760px, calc(100% - 48px)); }
-    .container { width: var(--container-w); margin: 0 auto; box-sizing: border-box; }
-    /* End (×) button: filled circle, matches mic size */
-    #endSession {
-      width: 44px; height: 44px; border-radius: 22px; /* match micFab */
-      display: flex; align-items: center; justify-content: center;
-      background: #F5F5F5; color: #0E0E10; /* match waveform gray */
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-      transition: background-color .15s ease, transform .04s ease;
-    }
-    #endSession:hover { background: #FBD5C7; }            /* peach on hover (same as mic) */
-    #endSession:active { background: #F7C2B0; transform: translateY(0.5px); }
-    #micFab { cursor: pointer; background: #F5F5F5; transition: background-color .15s ease; }
-    #micFab:hover { background: #FBD5C7; }
-  </style>
+  <!-- Favicons -->
+  <link rel="icon" href="./assets/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon-16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/apple-touch-icon.png">
+  <link rel="mask-icon" href="./assets/safari-pinned-tab.svg" color="#0E0E10">
+  <link rel="stylesheet" href="./styles/tokens.css">
+  <link rel="stylesheet" href="./styles/app.css">
 </head>
 
-<body
-  style="font-family:-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background:#FFFFFF; color:#0E0E10; display:flex; flex-direction:column; align-items:center; gap:24px; min-height:100vh; margin:0;">
+<body>
   <!-- Header / Brand -->
-  <header style="margin-top:40px; display:flex; flex-direction:column; align-items:center; gap:8px;">
-    <div style="display:flex; align-items:center; gap:10px;">
-      <img src="rizma_logo_color.png" alt="rizma logo"
-        style="width:36px; height:36px; box-shadow:0 1px 2px rgba(0,0,0,0.06);" />
-      <div style="font-size:28px; font-weight:700; letter-spacing:0.2px;">rizma</div>
+  <header class="container">
+    <div class="brand">
+      <img src="./assets/rizma_logo_color.png" alt="rizma logo">
+      <div class="name">rizma</div>
     </div>
-    <div style="font-size:16px; color:#6B6B6B;">Support Between Sessions</div>
+   <h2 id="subtitle" class="page-subtitle">Support Between Sessions</h2>
   </header>
 
   <!-- Therapist Card -->
-  <section class="container"
-    style="width:var(--container-w); background:#FFFFFF; border:1px solid #EEE; border-radius:20px; padding:32px; box-shadow:0 8px 24px rgba(0,0,0,0.05); display:flex; flex-direction:column; align-items:center; gap:16px;">
-    <img src="rizma-doc-3-elena_cropped.png" alt="Elena"
-      style="width:120px; height:120px; border-radius:60px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.06);" />
-    <div style="font-size:28px; font-weight:700;">Elena</div>
-    <div style="font-size:16px; color:#6B6B6B; text-align:center; max-width:520px;">Helps with homework and answers
-      questions.</div>
-    <button id="hold" aria-pressed="false" aria-label="Start Voice Session"
-      style="font-size:18px; font-weight:600; padding:16px 24px; border-radius:14px; background:#FBD5C7; color:#0E0E10; border:none; width:100%; max-width:420px; box-shadow:0 2px 6px rgba(0,0,0,0.06); display:none;">
-      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" style="display:block;"
-        fill="currentColor">
+  <section class="card">
+    <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
+    <h1 class="title">Elena</h1>
+    <p class="lead">Helps with homework and answers questions.</p>
+    <!-- hidden legacy button (kept for accessibility/testing) -->
+    <button id="hold" aria-pressed="false" aria-label="Start Voice Session" class="mic-btn hidden">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" fill="currentColor">
         <rect x="2" y="12" width="4" height="8" rx="2"></rect>
         <rect x="8" y="8" width="4" height="16" rx="2"></rect>
         <rect x="14" y="4" width="4" height="24" rx="2"></rect>
         <rect x="20" y="8" width="4" height="16" rx="2"></rect>
         <rect x="26" y="12" width="4" height="8" rx="2"></rect>
       </svg>
+      <span class="sr-only">Start Voice Session</span>
     </button>
   </section>
 
@@ -61,32 +48,24 @@
   <audio id="fallbackAudio" playsinline style="display:none;"></audio>
 
   <!-- Conversation Panel -->
-  <section id="panel" class="container"
-    style="width:var(--container-w); background:#FFFFFF; color:#0E0E10; border:1px solid #EEE; border-radius:16px; padding:12px 16px; box-shadow:0 4px 14px rgba(0,0,0,0.04); display:none;">
-    <div style="display:flex; justify-content:flex-end;">
-      <button id="endSession" aria-label="End session" title="End session"
-        style="border:none; font-size:22px; line-height:1; padding:0; cursor:pointer; color:#0E0E10;">
-        &times;
+  <section id="panel" class="container hidden">
+    <div style="display:flex; justify-content:flex-end; position:relative;">
+      <button id="endSession" class="panel-close" aria-label="End session" title="End session">
+        <span aria-hidden="true" style="font-size:20px;line-height:1">&times;</span>
+        <span class="sr-only">End session</span>
       </button>
     </div>
-    <div id="status" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Idle</div>
-    <div id="chat"
-      style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
+    <div id="status">Idle</div>
+    <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
   </section>
 
   <!-- Chat composer with waveform mic, button hidden above -->
-  <section id="composer" class="container"
-    style="width:var(--container-w); display:flex; align-items:center; gap:12px; margin-top:6px;">
-    <button id="composerPlus" aria-label="Add" title="Add"
-      style="width:36px; height:36px; border-radius:18px; background:#F5F5F5; border:none; color:#0E0E10; font-size:22px; line-height:36px; display:flex; align-items:center; justify-content:center;">
+  <section id="composer" class="composer">
+    <button id="composerPlus" aria-label="Add" title="Add" class="mic-btn" style="width:36px;height:36px;border-radius:18px">
       +
     </button>
-    <div id="composerInput"
-      style="flex:1; height:44px; border-radius:22px; background:#F5F5F5; color:#8B8B8B; display:flex; align-items:center; padding:0 14px; font-size:16px;">
-      Ask anything
-    </div>
-    <button id="micFab" aria-label="Start Voice Session" title="Start Voice Session"
-      style="width:44px; height:44px; border:none; border-radius:22px; color:#0E0E10; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.06);">
+    <div id="composerInput" class="pill">Ask anything</div>
+    <button id="micFab" class="mic-btn" aria-label="Start Voice Session" title="Start Voice Session">
       <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true" focusable="false" fill="currentColor">
         <rect x="2" y="12" width="4" height="8" rx="2"></rect>
         <rect x="8" y="8" width="4" height="16" rx="2"></rect>
@@ -98,14 +77,12 @@
   </section>
 
   <!-- Footer -->
-  <footer style="margin:8px 0 24px; color:#8B8B8B; font-size:14px; display:flex; gap:8px; align-items:center;">
+  <footer class="foot">
     <span>Secure &bull; Private &bull; Professional</span>
-    <button id="reset"
-      style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset
-      Session</button>
+    <button id="reset" style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset Session</button>
   </footer>
 
-<script type="module" src="./src/main.ts"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 
 </html>

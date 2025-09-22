@@ -1,0 +1,223 @@
+* {
+    box-sizing: border-box
+}
+
+html,
+body {
+    height: 100%
+}
+
+body {
+    margin: 0;
+    font-family: var(--rz-font);
+    color: var(--rz-black);
+    background: var(--rz-white);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale
+}
+
+.container {
+    max-width: var(--rz-panel-max);
+    margin-inline: auto;
+    padding: 24px 20px 56px
+}
+
+.card {
+    max-width: var(--rz-card-max);
+    margin: 0 auto 28px;
+    padding: 32px 20px 26px;
+    border-radius: var(--rz-radius-lg);
+    background: var(--rz-white);
+    box-shadow: var(--rz-shadow-soft);
+    border: 1px solid var(--rz-gray-100);
+    text-align: center
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 8px
+}
+
+.brand img {
+    height: 28px;
+    width: auto
+}
+
+.brand .name {
+    font-weight: 700;
+    font-size: 22px
+}
+
+.subtitle {
+    margin-top: 6px;
+    color: #7a7a81;
+    font-size: 14px
+}
+
+.avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+    margin: 0 auto 10px;
+    box-shadow: 0 2px 10px rgba(14, 14, 16, .08)
+}
+
+h1.title {
+    margin: 6px 0 2px;
+    font-size: 36px;
+    line-height: 1.1
+}
+
+p.lead {
+    margin: 0;
+    color: #62626b
+}
+
+.composer {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: var(--rz-card-max);
+    margin: 10px auto 14px
+}
+
+.pill {
+    flex: 1;
+    background: var(--rz-gray-50);
+    border-radius: 999px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    padding: 0 22px;
+    color: #9a9aa2;
+    border: 1px solid var(--rz-gray-100)
+}
+
+.mic-btn {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: inline-grid;
+    place-items: center;
+    background: var(--rz-gray-50);
+    border: 1px solid var(--rz-gray-100);
+    box-shadow: var(--rz-shadow-soft);
+    cursor: pointer;
+    transition: background var(--rz-trans-med), transform var(--rz-trans-fast)
+}
+
+.mic-btn:hover {
+    background: var(--rz-peach)
+}
+
+.mic-btn:active {
+    transform: scale(.98)
+}
+
+.mic-btn svg {
+    display: block
+}
+
+#status {
+    display: inline-block;
+    font-size: 12px;
+    color: #6a6a72;
+    background: linear-gradient(180deg, var(--rz-gray-50), var(--rz-gray-25));
+    border: 1px solid var(--rz-gray-100);
+    padding: 8px 12px;
+    border-radius: 999px;
+    margin: 8px auto 0
+}
+
+#panel {
+    max-width: var(--rz-card-max);
+    margin: 18px auto;
+    padding: 16px 14px;
+    background: var(--rz-white);
+    border: 1px solid var(--rz-gray-100);
+    border-radius: var(--rz-radius);
+    box-shadow: var(--rz-shadow-soft)
+}
+
+.bubble {
+    display: inline-block;
+    padding: 10px 14px;
+    border-radius: 16px;
+    margin: 10px 0;
+    max-width: 85%;
+    line-height: 1.35;
+    word-wrap: break-word
+}
+
+.bubble.elena {
+    background: var(--rz-gray-50);
+    color: #222
+}
+
+.bubble.me {
+    background: rgba(251, 213, 199, .65);
+    color: #222;
+    margin-left: auto;
+    display: block
+}
+
+.panel-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--rz-gray-50);
+    border: 1px solid var(--rz-gray-100);
+    cursor: pointer;
+    transition: background var(--rz-trans-med)
+}
+
+.panel-close:hover {
+    background: var(--rz-peach)
+}
+
+.foot {
+    color: #8a8a92;
+    font-size: 14px;
+    text-align: center;
+    margin-top: 22px
+}
+
+.hidden {
+    display: none !important
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    border: 0;
+    padding: 0;
+    white-space: nowrap;
+    clip-path: inset(50%);
+    clip: rect(0 0 0 0);
+    overflow: hidden
+}
+
+/* Center the small page subtitle under the logo */
+.page-subtitle {
+    text-align: center;
+    display: block;
+    /* ensures margin auto centers it even if it gets width */
+    margin: 0 auto 24px;
+    /* center + space below */
+    color: var(--rz-gray-500);
+    font-weight: 400;
+    line-height: 1.4;
+    font-size: 18px;
+}
