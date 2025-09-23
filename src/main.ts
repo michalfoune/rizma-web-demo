@@ -9,6 +9,7 @@ import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/s
 import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
+import { connectAnnie, disconnectAnnie, sendAnnieUserMessage } from './integrations/annie';
 import { httpLLM, httpTTS } from './api/openaiHttp';
 
 // Logger scopes & defaults
@@ -106,9 +107,71 @@ bindControls({
 });
 // --- End adaptive controls ---
 
-// Hide session UI initially
+// Hide session UI initially + wire tabs (Realtime vs Avatar)
+function showTab(which: 'realtime' | 'avatar') {
+    const avatarPanel = document.getElementById('avatarPanel');
+    const panel = document.getElementById('panel');
+    const composer = document.getElementById('composer');
+    const tRealtime = document.getElementById('tabRealtime');
+    const tAvatar = document.getElementById('tabAvatar');
+    if (!avatarPanel || !panel || !composer) return;
+
+    const toAvatar = which === 'avatar';
+    // Show/hide avatar panel
+    avatarPanel.classList.toggle('hidden', !toAvatar);
+
+    // Realtime views based on connection state
+    if (toAvatar) {
+        panel.classList.add('hidden');
+        composer.classList.add('hidden');
+    } else {
+        panel.classList.toggle('hidden', !state.isConnected);
+        composer.classList.toggle('hidden', !!state.isConnected);
+    }
+
+    tRealtime?.classList.toggle('active', !toAvatar);
+    tAvatar?.classList.toggle('active', toAvatar);
+}
+
 onDomReady(() => {
-    showSessionUI(false);   // hide panel, show composer (flex)
+    // Default: hide panel, show composer, and select Realtime tab
+    showSessionUI(false);
+    showTab('realtime');
+
+    // Tabs
+    document.getElementById('tabRealtime')?.addEventListener('click', () => {
+        showTab('realtime');
+    });
+    document.getElementById('tabAvatar')?.addEventListener('click', async () => {
+        // Avoid double-binding mic/audio: disconnect realtime if active
+        if (state.isConnected) {
+            try { disconnectRealtime(); } catch {}
+            showSessionUI(false);
+        }
+        showTab('avatar');
+    });
+
+    // Avatar buttons
+    document.getElementById('annieConnect')?.addEventListener('click', async () => {
+        const token = (document.getElementById('annieToken') as HTMLInputElement)?.value?.trim();
+        const userId = (document.getElementById('annieUserId') as HTMLInputElement)?.value?.trim() || (crypto?.randomUUID?.() || String(Date.now()));
+        const animatoId = (document.getElementById('annieAnimatoId') as HTMLInputElement)?.value?.trim() || 'annie';
+        const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
+        const root = document.getElementById('annieRoot') as HTMLElement | null;
+        if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
+        try {
+            await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
+        } catch (e) { console.warn('Avatar connect failed', e); }
+    });
+
+    document.getElementById('annieDisconnect')?.addEventListener('click', () => {
+        try { disconnectAnnie(); } catch {}
+    });
+
+    document.getElementById('annieSend')?.addEventListener('click', () => {
+        const msg = (document.getElementById('annieMessage') as HTMLInputElement)?.value ?? '';
+        if (msg.trim()) sendAnnieUserMessage(msg.trim());
+    });
 });
 
 // --- Response triggering over DataChannel ---

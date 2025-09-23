@@ -22,10 +22,16 @@
       <img src="./assets/rizma_logo_color.png" alt="rizma logo">
       <div class="name">rizma</div>
     </div>
-   <h2 id="subtitle" class="page-subtitle">Support Between Sessions</h2>
+    <h2 id="subtitle" class="page-subtitle">Support Between Sessions</h2>
   </header>
 
-  <!-- Therapist Card -->
+  <!-- Mode Tabs -->
+  <nav class="tabs container" aria-label="Mode">
+    <button id="tabRealtime" class="tab active" type="button">OpenAI Realtime</button>
+    <button id="tabAvatar" class="tab" type="button">Avatar</button>
+  </nav>
+
+  <!-- Therapist Card (Realtime default view) -->
   <section class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
@@ -47,7 +53,7 @@
   <!-- Fallback audio for HTTP TTS when Realtime fails -->
   <audio id="fallbackAudio" playsinline style="display:none;"></audio>
 
-  <!-- Conversation Panel -->
+  <!-- Conversation Panel (Realtime) -->
   <section id="panel" class="container hidden">
     <div style="display:flex; justify-content:flex-end; position:relative;">
       <button id="endSession" class="panel-close" aria-label="End session" title="End session">
@@ -59,7 +65,36 @@
     <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
   </section>
 
-  <!-- Chat composer with waveform mic, button hidden above -->
+  <!-- Avatar / Annie Panel (hidden until selected) -->
+  <section id="avatarPanel" class="container hidden">
+    <div class="card" style="text-align:left">
+      <div class="row" style="margin-bottom:8px">
+        <input id="annieToken" class="input" placeholder="Session access token" />
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <input id="annieUserId" class="input" placeholder="User ID" />
+        <input id="annieAnimatoId" class="input" placeholder="Animato ID" value="annie" />
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="annieMic" checked /> Mic
+        </label>
+        <button id="annieConnect" class="btn" type="button">Connect</button>
+        <button id="annieDisconnect" class="btn secondary" type="button">Disconnect</button>
+      </div>
+      <!-- Stage: big avatar with small self camera in the corner -->
+      <div id="annieStage" class="annie-stage" style="margin-top:12px">
+        <div id="annieRoot" class="annie-root"></div>
+        <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="annieMessage" class="input" placeholder="Message" />
+        <button id="annieSend" class="btn" type="button">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Chat composer with waveform mic (Realtime) -->
   <section id="composer" class="composer">
     <button id="composerPlus" aria-label="Add" title="Add" class="mic-btn" style="width:36px;height:36px;border-radius:18px">
       +
