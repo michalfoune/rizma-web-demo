@@ -87,8 +87,24 @@ renderHistory(memory);
 
 bindControls({
     onConnect: async () => {
-        await connectRealtime();            // your existing function
-        state.isRecording = true;           // you’ll flip this in your mic toggle too
+        // Route mic/waveform by selected radio: Avatar vs Realtime
+        if (isAvatarMode()) {
+            // If we were connected to Realtime, cleanly disconnect first
+            if (state.isConnected) {
+                try { disconnectRealtime(); } catch {}
+                showSessionUI(false);
+            }
+            // Switch UI and show Annie controls; don’t auto-connect
+            showTab('avatar');
+            // Show Annie controls; don’t auto-connect
+            document.getElementById('annieControls')?.classList.remove('hidden');
+            document.getElementById('avatarClose')?.classList.add('hidden');
+            setStatus('Idle');
+            return;
+        }
+        // Default: OpenAI Realtime
+        await connectRealtime();
+        state.isRecording = true;
         setStatus('Listening...');
     },
     onToggleMic: async (next) => {
@@ -133,6 +149,12 @@ function showTab(which: 'realtime' | 'avatar') {
     tAvatar?.classList.toggle('active', toAvatar);
 }
 
+// Small mode check helper – reads the Avatar radio directly from DOM
+function isAvatarMode(): boolean {
+  const el = document.getElementById('modeAvatar') as HTMLInputElement | null;
+  return !!el?.checked;
+}
+
 onDomReady(() => {
     // Default: hide panel, show composer, and select Realtime tab
     showSessionUI(false);
@@ -161,11 +183,16 @@ onDomReady(() => {
         if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
         try {
             await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
+            // Hide controls only after a successful connection
+            document.getElementById('annieControls')?.classList.add('hidden');
+            document.getElementById('avatarClose')?.classList.remove('hidden');
         } catch (e) { console.warn('Avatar connect failed', e); }
     });
 
     document.getElementById('annieDisconnect')?.addEventListener('click', () => {
         try { disconnectAnnie(); } catch {}
+        document.getElementById('annieControls')?.classList.remove('hidden');
+        document.getElementById('avatarClose')?.classList.add('hidden');
     });
 
     document.getElementById('annieSend')?.addEventListener('click', () => {

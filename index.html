@@ -22,20 +22,25 @@
       <img src="./assets/rizma_logo_color.png" alt="rizma logo">
       <div class="name">rizma</div>
     </div>
-    <h2 id="subtitle" class="page-subtitle">Support Between Sessions</h2>
+    <h2 id="subtitle" class="page-subtitle">Fix Your Self-Talk.</h2>
   </header>
 
   <!-- Mode Tabs -->
   <nav class="tabs container" aria-label="Mode">
-    <button id="tabRealtime" class="tab active" type="button">OpenAI Realtime</button>
-    <button id="tabAvatar" class="tab" type="button">Avatar</button>
+    <div class="segmented" role="tablist" aria-label="Mode">
+      <input type="radio" name="mode" id="modeRealtime" class="seg-radio" checked />
+      <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">gpt-realtime</label>
+
+      <input type="radio" name="mode" id="modeAvatar" class="seg-radio" />
+      <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">Animato</label>
+    </div>
   </nav>
 
   <!-- Therapist Card (Realtime default view) -->
   <section class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
-    <p class="lead">Helps with homework and answers questions.</p>
+    <p class="lead">Role-Plays for Social Confidence.</p>
     <!-- hidden legacy button (kept for accessibility/testing) -->
     <button id="hold" aria-pressed="false" aria-label="Start Voice Session" class="mic-btn hidden">
       <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" fill="currentColor">
@@ -49,33 +54,39 @@
     </button>
   </section>
 
-  <audio id="remoteAudio" autoplay playsinline style="display:none;"></audio>
+  <audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
   <!-- Fallback audio for HTTP TTS when Realtime fails -->
-  <audio id="fallbackAudio" playsinline style="display:none;"></audio>
+  <audio id="fallbackAudio" playsinline class="hidden"></audio>
 
   <!-- Conversation Panel (Realtime) -->
   <section id="panel" class="container hidden">
-    <div style="display:flex; justify-content:flex-end; position:relative;">
+    <div class="row-end">
       <button id="endSession" class="panel-close" aria-label="End session" title="End session">
-        <span aria-hidden="true" style="font-size:20px;line-height:1">&times;</span>
+        <span aria-hidden="true" class="glyph">&times;</span>
         <span class="sr-only">End session</span>
       </button>
     </div>
     <div id="status">Idle</div>
-    <div id="chat" style="display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow:auto; padding-right:6px;"></div>
+    <div id="chat" class="chat-scroll"></div>
   </section>
 
   <!-- Avatar / Annie Panel (hidden until selected) -->
   <section id="avatarPanel" class="container hidden">
-    <div class="card" style="text-align:left">
-      <div class="row" style="margin-bottom:8px">
+    <div class="card text-left">
+      <div class="row-end align-center">
+        <button id="endAvatar" class="panel-close hide-until-connected pos-static ml-auto z-3" aria-label="End avatar session" title="End avatar session">
+          <span aria-hidden="true" style="font-size:20px;line-height:1">&times;</span>
+          <span class="sr-only">End session</span>
+        </button>
+      </div>
+      <div class="row mb-8" data-annie-control>
         <input id="annieToken" class="input" placeholder="Session access token" />
       </div>
-      <div class="row" style="margin-bottom:8px">
+      <div class="row mb-8" data-annie-control>
         <input id="annieUserId" class="input" placeholder="User ID" />
         <input id="annieAnimatoId" class="input" placeholder="Animato ID" value="annie" />
       </div>
-      <div class="row" style="margin-bottom:8px">
+      <div class="row mb-8" data-annie-control>
         <label style="display:flex;align-items:center;gap:6px">
           <input type="checkbox" id="annieMic" checked /> Mic
         </label>
@@ -83,11 +94,11 @@
         <button id="annieDisconnect" class="btn secondary" type="button">Disconnect</button>
       </div>
       <!-- Stage: big avatar with small self camera in the corner -->
-      <div id="annieStage" class="annie-stage" style="margin-top:12px">
+      <div id="annieStage" class="annie-stage mt-12">
         <div id="annieRoot" class="annie-root"></div>
         <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
       </div>
-      <div class="row" style="margin-top:10px">
+      <div class="row mt-10" data-annie-control>
         <input id="annieMessage" class="input" placeholder="Message" />
         <button id="annieSend" class="btn" type="button">Send</button>
       </div>
@@ -96,7 +107,7 @@
 
   <!-- Chat composer with waveform mic (Realtime) -->
   <section id="composer" class="composer">
-    <button id="composerPlus" aria-label="Add" title="Add" class="mic-btn" style="width:36px;height:36px;border-radius:18px">
+    <button id="composerPlus" aria-label="Add" title="Add" class="mic-btn btn-circle-36">
       +
     </button>
     <div id="composerInput" class="pill">Ask anything</div>
@@ -114,9 +125,31 @@
   <!-- Footer -->
   <footer class="foot">
     <span>Secure &bull; Private &bull; Professional</span>
-    <button id="reset" style="margin-left:12px; font-size:12px; color:#6B6B6B; background:transparent; border:none; text-decoration:underline; cursor:pointer;">Reset Session</button>
+    <button id="reset" class="link-btn ml-12">Reset Session</button>
   </footer>
 
+  <script>
+    // Lightweight UI toggler for the Avatar tab (no build step needed)
+    document.addEventListener('DOMContentLoaded', () => {
+      const endBtn = document.getElementById('endAvatar');
+      const connectBtn = document.getElementById('annieConnect');
+      const disconnectBtn = document.getElementById('annieDisconnect');
+      const controls = Array.from(document.querySelectorAll('#avatarPanel [data-annie-control]'));
+
+      function setAvatarConnected(connected) {
+        controls.forEach(el => el.classList.toggle('hidden', !!connected));
+        if (endBtn) endBtn.style.display = connected ? 'inline-flex' : 'none';
+      }
+
+      if (connectBtn) connectBtn.addEventListener('click', () => setAvatarConnected(true));
+      if (disconnectBtn) disconnectBtn.addEventListener('click', () => setAvatarConnected(false));
+      if (endBtn) endBtn.addEventListener('click', () => {
+        // Delegate to the existing Disconnect button so the integration cleans up
+        if (disconnectBtn) disconnectBtn.click();
+        setAvatarConnected(false);
+      });
+    });
+  </script>
   <script type="module" src="/src/main.ts"></script>
 </body>
 

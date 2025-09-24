@@ -36,9 +36,9 @@ body {
 .brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 5px;
     justify-content: center;
-    margin-bottom: 8px
+    margin-bottom: 4px
 }
 
 .brand img {
@@ -54,7 +54,7 @@ body {
 .subtitle {
     margin-top: 6px;
     color: #7a7a81;
-    font-size: 14px
+    font-size: 8px
 }
 
 .avatar {
@@ -68,7 +68,7 @@ body {
 }
 
 h1.title {
-    margin: 6px 0 2px;
+    margin: 2px 0 0;
     font-size: 36px;
     line-height: 1.1
 }
@@ -173,16 +173,24 @@ p.lead {
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    display: grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
     background: var(--rz-gray-50);
     border: 1px solid var(--rz-gray-100);
     cursor: pointer;
-    transition: background var(--rz-trans-med)
+    transition: background var(--rz-trans-med);
 }
 
 .panel-close:hover {
     background: var(--rz-peach)
+}
+
+.panel-close > span {
+    display: block;
+    line-height: 1;
 }
 
 .foot {
@@ -214,7 +222,7 @@ p.lead {
     text-align: center;
     display: block;
     /* ensures margin auto centers it even if it gets width */
-    margin: 0 auto 24px;
+    margin: 2px auto 6px;
     /* center + space below */
     color: var(--rz-gray-500);
     font-weight: 400;
@@ -252,3 +260,69 @@ p.lead {
 @media (max-width: 720px){
   .self-cam{ width: 160px; }
 }
+
+/* --- tiny utility classes moved from inline styles --- */
+.hidden { display: none !important; }
+.row-end { display: flex; justify-content: flex-end; position: relative; }
+.align-center { align-items: center; }
+.glyph { font-size: 20px; line-height: 1; display: inline-block; }
+.chat-scroll { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow: auto; padding-right: 6px; }
+.text-left { text-align: left; }
+.mb-8 { margin-bottom: 8px; }
+.mt-12 { margin-top: 12px; }
+.mt-10 { margin-top: 10px; }
+.ml-auto { margin-left: auto; }
+.ml-12 { margin-left: 12px; }
+.btn-circle-36 { width: 36px; height: 36px; border-radius: 10px; }
+.link-btn { font-size: 12px; color: var(--gray-600); background: transparent; border: none; text-decoration: underline; cursor: pointer; }
+.pos-static { position: static !important; }
+.z-3 { z-index: 3; }
+/* ensure the avatar close button we toggle starts hidden */
+.hide-until-connected { display: none; }
+
+/* --- Compact, low‑key toggle for the two top tabs (no HTML changes required) --- */
+/* If your HTML uses #tab-rt and #tab-annie buttons, these rules will style them
+   as a subtle segmented control. Add/remove the .active class in JS as you do now. */
+#tab-rt,
+#tab-annie {
+  appearance: none;
+  border: 1px solid var(--rz-gray-100);
+  background: var(--rz-gray-50);
+  color: #6a6a72;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  line-height: 1;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: var(--rz-shadow-soft);
+  transition: background var(--rz-trans-med), color var(--rz-trans-med), box-shadow var(--rz-trans-med);
+}
+#tab-rt:hover,
+#tab-annie:hover { background: var(--rz-gray-75, #f2f3f5); }
+#tab-rt.active,
+#tab-annie.active {
+  background: var(--rz-white);
+  color: var(--rz-black);
+  box-shadow: inset 0 0 0 1px var(--rz-gray-200), 0 1px 1px rgba(14,14,16,.04);
+}
+
+/* Optional wrapper if you already have a container around the tabs. Safe to keep even if unused. */
+.tab-group,
+.tabs-inline,
+.segmented {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+
+/* Center the mode toggle (radios/segmented) */
+.tabs { display: flex; justify-content: center; margin: 4px auto 6px; }
+.tabs + .card { margin-top: 6px; }
+.tabs .segmented, .segmented { margin-left: auto; margin-right: auto; }
+
+/* Tighten vertical padding for header + tabs containers only */
+header.container { padding-top: 12px; padding-bottom: 6px; }
+nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
