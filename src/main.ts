@@ -9,7 +9,8 @@ import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/s
 import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
-import { connectAnnie, disconnectAnnie, sendAnnieUserMessage } from './integrations/annie';
+import { connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic } from './integrations/annie';
+import { Animato_UserID, Animato_ID } from './config/constants';
 import { httpLLM, httpTTS } from './api/openaiHttp';
 
 // Logger scopes & defaults
@@ -41,15 +42,18 @@ const SERVER_VAD = true; // matches session.update turn_detection
 
 // Buffers for streaming transcripts
 let assistantBuf = "";
+// --- Types ---------------------------------------------------------------
+/** Minimal shape for Realtime events so TS doesn't complain (we only switch on `type`). */
+type RealtimeEvent = { type: string; [k: string]: any };
 
 // --- Debug: remote audio & stats ---
-function attachRemoteAudioDebug(el) {
+function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
     if (!el) return;
     el.addEventListener('play', () => uiLog.debug('remoteAudio: play'));
     el.addEventListener('pause', () => uiLog.debug('remoteAudio: pause'));
     el.addEventListener('loadedmetadata', () => uiLog.debug('remoteAudio: loadedmetadata'));
 }
-async function startRtpStats(pc) {
+async function startRtpStats(pc: RTCPeerConnection): Promise<void> {
     try {
         const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
         const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'audio');
@@ -91,7 +95,7 @@ bindControls({
         if (isAvatarMode()) {
             // If we were connected to Realtime, cleanly disconnect first
             if (state.isConnected) {
-                try { disconnectRealtime(); } catch {}
+                try { disconnectRealtime(); } catch { }
                 showSessionUI(false);
             }
             // Switch UI and show Annie controls; don’t auto-connect
@@ -108,11 +112,16 @@ bindControls({
         setStatus('Listening...');
     },
     onToggleMic: async (next) => {
-        // you control the mic track here (no DOM in controls.ts)
+        if (isAvatarMode()) {
+            setAnnieMic(next);                  // make the waveform/mic button control the avatar mic
+            setStatus(next ? 'Listening…' : 'Muted');
+            return;
+        }
+        // existing realtime toggle
         const track = firstAudioTrack(state.micStream);
         if (track) track.enabled = next;
         state.isRecording = !!next;
-        setStatus(next ? 'Listening...' : 'Idle');
+        setStatus(next ? 'Listening…' : 'Idle');
     },
     onEnd: () => {
         disconnectRealtime();
@@ -151,8 +160,8 @@ function showTab(which: 'realtime' | 'avatar') {
 
 // Small mode check helper – reads the Avatar radio directly from DOM
 function isAvatarMode(): boolean {
-  const el = document.getElementById('modeAvatar') as HTMLInputElement | null;
-  return !!el?.checked;
+    const el = document.getElementById('modeAvatar') as HTMLInputElement | null;
+    return !!el?.checked;
 }
 
 onDomReady(() => {
@@ -167,7 +176,7 @@ onDomReady(() => {
     document.getElementById('tabAvatar')?.addEventListener('click', async () => {
         // Avoid double-binding mic/audio: disconnect realtime if active
         if (state.isConnected) {
-            try { disconnectRealtime(); } catch {}
+            try { disconnectRealtime(); } catch { }
             showSessionUI(false);
         }
         showTab('avatar');
@@ -176,8 +185,8 @@ onDomReady(() => {
     // Avatar buttons
     document.getElementById('annieConnect')?.addEventListener('click', async () => {
         const token = (document.getElementById('annieToken') as HTMLInputElement)?.value?.trim();
-        const userId = (document.getElementById('annieUserId') as HTMLInputElement)?.value?.trim() || (crypto?.randomUUID?.() || String(Date.now()));
-        const animatoId = (document.getElementById('annieAnimatoId') as HTMLInputElement)?.value?.trim() || 'annie';
+        const userId = Animato_UserID; // fixed for now; could be made user-editable
+        const animatoId = Animato_ID; // fixed for now; could be made user-editable
         const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
         const root = document.getElementById('annieRoot') as HTMLElement | null;
         if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
@@ -190,7 +199,7 @@ onDomReady(() => {
     });
 
     document.getElementById('annieDisconnect')?.addEventListener('click', () => {
-        try { disconnectAnnie(); } catch {}
+        try { disconnectAnnie(); } catch { }
         document.getElementById('annieControls')?.classList.remove('hidden');
         document.getElementById('avatarClose')?.classList.add('hidden');
     });
@@ -377,7 +386,7 @@ function disconnectRealtime() {
     showSessionUI(false);
 }
 
-async function handleServerEvent(evt) {
+async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
     evtLog.trace('evt %s', evt?.type);
     // Common realtime events we care about:
     // - input_audio_buffer.speech_started / speech_stopped
@@ -476,7 +485,7 @@ async function handleServerEvent(evt) {
 // --- End Realtime: WebRTC connection + event handling ---
 
 function resetSession() {
-    try { disconnectRealtime(); } catch {}
+    try { disconnectRealtime(); } catch { }
     clearMemory();
     clearChat();
     renderHistory(memory);

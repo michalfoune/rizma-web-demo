@@ -5,3 +5,5 @@ export const VOICE = "marin";
 export const SERVER_VAD = true;
 export const ICE_TIMEOUT_MS = 3000;
 export const MAX_TURNS_TO_SEND = 6;
+export const Animato_UserID = "nq8VsBjx36WZ3IHzfuAiC2mZV5w2";
+export const Animato_ID = "1306fb5b-e6fd-4ef6-9853-319735b3168f";

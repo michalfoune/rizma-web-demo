@@ -22,16 +22,16 @@
       <img src="./assets/rizma_logo_color.png" alt="rizma logo">
       <div class="name">rizma</div>
     </div>
-    <h2 id="subtitle" class="page-subtitle">Fix Your Self-Talk.</h2>
+    <h2 id="subtitle" class="page-subtitle">Role-Plays for The Workplace.</h2>
   </header>
 
   <!-- Mode Tabs -->
   <nav class="tabs container" aria-label="Mode">
     <div class="segmented" role="tablist" aria-label="Mode">
-      <input type="radio" name="mode" id="modeRealtime" class="seg-radio" checked />
+      <input type="radio" name="mode" id="modeRealtime" class="seg-radio" />
       <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">gpt-realtime</label>
 
-      <input type="radio" name="mode" id="modeAvatar" class="seg-radio" />
+      <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked/>
       <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">Animato</label>
     </div>
   </nav>
@@ -40,7 +40,7 @@
   <section class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
-    <p class="lead">Role-Plays for Social Confidence.</p>
+    <p class="lead">Delivering Tough Feedback. Introductions. Social.</p>
     <!-- hidden legacy button (kept for accessibility/testing) -->
     <button id="hold" aria-pressed="false" aria-label="Start Voice Session" class="mic-btn hidden">
       <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" fill="currentColor">
@@ -83,13 +83,6 @@
         <input id="annieToken" class="input" placeholder="Session access token" />
       </div>
       <div class="row mb-8" data-annie-control>
-        <input id="annieUserId" class="input" placeholder="User ID" />
-        <input id="annieAnimatoId" class="input" placeholder="Animato ID" value="annie" />
-      </div>
-      <div class="row mb-8" data-annie-control>
-        <label style="display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="annieMic" checked /> Mic
-        </label>
         <button id="annieConnect" class="btn" type="button">Connect</button>
         <button id="annieDisconnect" class="btn secondary" type="button">Disconnect</button>
       </div>
@@ -97,10 +90,6 @@
       <div id="annieStage" class="annie-stage mt-12">
         <div id="annieRoot" class="annie-root"></div>
         <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
-      </div>
-      <div class="row mt-10" data-annie-control>
-        <input id="annieMessage" class="input" placeholder="Message" />
-        <button id="annieSend" class="btn" type="button">Send</button>
       </div>
     </div>
   </section>

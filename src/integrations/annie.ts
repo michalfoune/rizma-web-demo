@@ -55,8 +55,10 @@ export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
   avatar = new Ctor(opts.token, opts.animatoId, opts.userId, opts.username ?? 'rizma');
   avatar.setHTMLRoot(opts.root);
   avatar.setLang(opts.lang ?? 'en');
-  avatar.setMicrophoneEnabled(!!opts.mic);
   avatar.connect();
+
+  // Wait until the SDK signals the room is connected before toggling mic/cam.
+  await waitForAnnieConnected(avatar, 1500);
 
   // One self-cam attach, after user gesture
   const selfEl = document.getElementById('selfCam') as HTMLVideoElement | null;
@@ -95,7 +97,21 @@ export function getAnnieInstance(): any | null {
     return avatar;
 }
 
+let lastMic: boolean | null = null;
 let selfCamStream: MediaStream | null = null;
+
+export function setAnnieMic(enabled: boolean): void {
+  // Avoid sending duplicate mic toggles; some backends treat this as a metadata update.
+  if (lastMic === enabled) return;
+  lastMic = enabled;
+  try {
+    if (avatar?.setMicrophoneEnabled) {
+      avatar.setMicrophoneEnabled(enabled);
+    }
+  } catch (e) {
+    console.debug('mic toggle ignored:', e);
+  }
+}
 
 export async function attachSelfCam(el: HTMLVideoElement) {
     try {
@@ -104,6 +120,8 @@ export async function attachSelfCam(el: HTMLVideoElement) {
             audio: false
         });
         el.srcObject = selfCamStream;
+        el.muted = true;
+        el.playsInline = true;
         try { await el.play(); } catch { }
     } catch (err) {
         console.warn('Self camera failed:', err);
@@ -115,4 +133,33 @@ export function stopSelfCam() {
         selfCamStream.getTracks().forEach(t => t.stop());
         selfCamStream = null;
     }
+}
+
+/** Best-effort wait until the vendor SDK reports connection. */
+function waitForAnnieConnected(target: any, timeoutMs = 1500): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; off(); resolve(); } };
+
+    // Try multiple event names the SDK might use.
+    const names = ['connected', 'ready', 'room_joined', 'joined', 'open'];
+    const fns: Array<() => void> = [];
+
+    const off = () => fns.forEach((offFn) => offFn());
+
+    names.forEach((name) => {
+      const fn = () => finish();
+      // Support both EventEmitter-style `on/off` and DOM-style `add/removeEventListener`.
+      if (typeof target?.on === 'function' && typeof target?.off === 'function') {
+        target.on(name, fn);
+        fns.push(() => { try { target.off(name, fn); } catch { /* ignore */ } });
+      } else if (typeof target?.addEventListener === 'function' && typeof target?.removeEventListener === 'function') {
+        target.addEventListener(name, fn);
+        fns.push(() => { try { target.removeEventListener(name, fn); } catch { /* ignore */ } });
+      }
+    });
+
+    // Fallback: resolve after a short delay if nothing fires.
+    setTimeout(finish, timeoutMs);
+  });
 }
