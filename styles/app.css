@@ -247,18 +247,19 @@ p.lead {
 }
 .self-cam{
   position: absolute;
+  left: auto;
   right: 12px;
   bottom: 12px;
-  width: 220px;
-  max-width: 30%;
+  width: clamp(168px, 21.6%, 288px);
+  max-width: 36%;
   aspect-ratio: 16/9;
   background: #000;
-  border-radius: 12px;
+  border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0,0,0,.35);
   object-fit: cover;
 }
 @media (max-width: 720px){
-  .self-cam{ width: 160px; }
+  .self-cam{ width: clamp(144px, 28.8vw, 216px); }
 }
 
 /* --- tiny utility classes moved from inline styles --- */
@@ -326,3 +327,74 @@ p.lead {
 /* Tighten vertical padding for header + tabs containers only */
 header.container { padding-top: 12px; padding-bottom: 6px; }
 nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
+
+/* --- Avatar root sizing (Option A – CSS‑only) -------------------------------- */
+/* If you mount the SDK into an element with id="annieRoot", this enforces ~16:9 */
+#annieRoot {
+  width: min(100%, 900px);
+  aspect-ratio: 16 / 10;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative; /* so absolutely‑positioned children stay inside */
+  --annie-obj-x: 50%;   /* horizontal anchor */
+  --annie-obj-y: 40%;   /* keep eyes centred while filling top/bottom */
+  --annie-zoom: 0.95;   /* slight zoom-in to fully remove letterbox */
+}
+
+/* If you mount into a class .annie-root, keep earlier behavior but ensure media fills */
+.annie-root { position: absolute; inset: 0; }
+
+/* Make media drawn by the SDK fill the root cleanly */
+#annieRoot video,
+#annieRoot canvas,
+#annieRoot img,
+.annie-root video,
+.annie-root canvas,
+.annie-root img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* CHANGED from contain to eliminate side bars */
+  object-position: var(--annie-obj-x, 50%) var(--annie-obj-y, 40%);
+  transform: scale(var(--annie-zoom, 1));
+  transform-origin: var(--annie-obj-x, 50%) var(--annie-obj-y, 40%);
+  display: block;
+}
+
+/* --- Optional fit toggles: add .fit-contain or .fit-cover to #annieRoot or its parent --- */
+.fit-contain video,
+.fit-contain canvas,
+.fit-contain img {
+  object-fit: contain;
+  object-position: center;
+}
+
+.fit-cover video,
+.fit-cover canvas,
+.fit-cover img {
+  object-fit: cover;
+  object-position: center top;
+}
+
+/* --- Letterbox bleed fix (Option A) ---------------------------------------
+   Nudge media up slightly and grow its height a few pixels so any residual
+   1–3px top stripe is covered, without changing perceived zoom.
+   This targets only media directly inside #annieRoot and overrides earlier
+   absolute positioning that used `inset: 0`.
+--------------------------------------------------------------------------- */
+#annieRoot { overflow: hidden; }
+
+#annieRoot > video,
+#annieRoot > canvas,
+#annieRoot > img {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;                /* bleed upward */
+  bottom: auto;             /* override earlier inset: 0 */
+  width: 100%;
+  height: calc(100% + 4px); /* fill past top & bottom a hair */
+  object-fit: cover;
+}
