@@ -32,7 +32,7 @@
       <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">gpt-realtime</label>
 
       <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked/>
-      <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">Animato</label>
+      <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">CallAnnie</label>
     </div>
   </nav>
 
@@ -40,7 +40,7 @@
   <section class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
-    <p class="lead">Delivering Tough Feedback. Introductions. Social.</p>
+    <p class="lead">Tough Feedback. Introductions. Social.</p>
     <!-- hidden legacy button (kept for accessibility/testing) -->
     <button id="hold" aria-pressed="false" aria-label="Start Voice Session" class="mic-btn hidden">
       <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" fill="currentColor">
@@ -52,6 +52,24 @@
       </svg>
       <span class="sr-only">Start Voice Session</span>
     </button>
+  </section>
+
+  <!-- Role Play choices -->
+  <section id="scenarios" class="container" aria-label="Role Plays">
+    <div class="role-row" role="listbox" aria-label="Choose a role play">
+      <button class="scenario is-selected" data-scenario="introductions" role="option" aria-selected="true">
+        <div class="thumb" aria-hidden="true"></div>
+        <div class="label">Introduce Yourself</div>
+      </button>
+      <button class="scenario" data-scenario="feedback" role="option" aria-selected="false">
+        <div class="thumb" aria-hidden="true"></div>
+        <div class="label">Deliver Tough Feedback</div>
+      </button>
+      <button class="scenario" data-scenario="happyhour" role="option" aria-selected="false">
+        <div class="thumb" aria-hidden="true"></div>
+        <div class="label">Social Happy Hour</div>
+      </button>
+    </div>
   </section>
 
   <audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
@@ -87,6 +105,7 @@
         <button id="annieDisconnect" class="btn secondary" type="button">Disconnect</button>
       </div>
       <!-- Stage: big avatar with small self camera in the corner -->
+      <h3 id="scenarioTitle" class="scenario-title hidden"></h3>
       <div id="annieStage" class="annie-stage mt-12">
         <div id="annieRoot" class="annie-root"></div>
         <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
@@ -137,6 +156,63 @@
         if (disconnectBtn) disconnectBtn.click();
         setAvatarConnected(false);
       });
+
+      // --- Role play selection (lightweight) ---
+      const scenariosEl = document.getElementById('scenarios');
+      const scenarioBtns = Array.from(document.querySelectorAll('#scenarios .scenario'));
+      function setScenario(s) {
+        window.selectedScenario = s; // expose for main.ts if needed
+        scenarioBtns.forEach(btn => {
+          const on = btn.dataset.scenario === s;
+          btn.classList.toggle('is-selected', on);
+          btn.setAttribute('aria-selected', String(on));
+        });
+        document.dispatchEvent(new CustomEvent('scenario:selected', { detail: { scenario: s }}));
+      }
+      if (scenarioBtns.length) {
+        // default
+        setScenario('introductions');
+        scenarioBtns.forEach(btn => btn.addEventListener('click', () => setScenario(btn.dataset.scenario)));
+      }
+      // Optional hooks to hide/show choices when a session starts/ends.
+      document.addEventListener('session:start', () => { if (scenariosEl) scenariosEl.classList.add('hidden'); });
+      document.addEventListener('session:end',   () => { if (scenariosEl) scenariosEl.classList.remove('hidden'); });
+
+      // --- Scenario title handling ---
+      const scenarioTitleEl = document.getElementById('scenarioTitle');
+      function setScenarioTitleFromSelection() {
+        try {
+          const sel = document.querySelector('#scenarios .scenario.is-selected .label');
+          if (sel && scenarioTitleEl) scenarioTitleEl.textContent = sel.textContent || '';
+        } catch {}
+      }
+      function showScenarioTitle(show) {
+        if (!scenarioTitleEl) return;
+        scenarioTitleEl.classList.toggle('hidden', !show);
+      }
+      // keep title text in sync with selection (hidden until session starts)
+      document.addEventListener('scenario:selected', setScenarioTitleFromSelection);
+      setScenarioTitleFromSelection();
+
+      // Show title when user starts avatar via waveform button
+      const micFabBtn = document.getElementById('micFab');
+      const modeAvatar = document.getElementById('modeAvatar');
+      if (micFabBtn) {
+        micFabBtn.addEventListener('click', () => {
+          if (modeAvatar && modeAvatar.checked) {
+            setScenarioTitleFromSelection();
+            showScenarioTitle(true);
+            if (scenariosEl) scenariosEl.classList.add('hidden');
+            document.dispatchEvent(new Event('session:start'));
+          }
+        });
+      }
+      // Also show on explicit Avatar Connect button
+      if (connectBtn) connectBtn.addEventListener('click', () => { setScenarioTitleFromSelection(); showScenarioTitle(true); });
+      // Hide on end/disconnect and on global session end
+      if (disconnectBtn) disconnectBtn.addEventListener('click', () => showScenarioTitle(false));
+      if (endBtn) endBtn.addEventListener('click', () => showScenarioTitle(false));
+      document.addEventListener('session:end', () => showScenarioTitle(false));
     });
   </script>
   <script type="module" src="/src/main.ts"></script>

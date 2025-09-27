@@ -224,7 +224,7 @@ p.lead {
     /* ensures margin auto centers it even if it gets width */
     margin: 2px auto 6px;
     /* center + space below */
-    color: var(--rz-gray-500);
+    color: var(--rz-gray-400, #9a9aa2);
     font-weight: 400;
     line-height: 1.4;
     font-size: 18px;
@@ -398,3 +398,134 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
   height: calc(100% + 4px); /* fill past top & bottom a hair */
   object-fit: cover;
 }
+
+/* Role-plays row */
+.role-row {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  align-items: stretch;
+  margin: 16px 0 8px;
+}
+
+/* Each scenario box */
+.scenario {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  width: 180px;           /* ~thumbnail-ish; tweak as you like */
+}
+
+.scenario .thumb {
+  width: 100%;
+  height: 120px;          /* rectangle */
+  border-radius: 12px;
+  background: #f4f4f5;    /* placeholder until real images */
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+  filter: brightness(0.8) saturate(0.5);
+  transition: box-shadow .18s ease, transform .18s ease, background-color .18s ease, filter .18s ease;
+}
+
+.scenario .label {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #111;
+  text-align: center; /* center the title */
+}
+
+/* Selected state */
+.scenario.is-selected .thumb {
+  box-shadow: inset 0 0 0 2px var(--accent, #FF6B3D),
+              0 8px 22px rgba(255, 107, 61, 0.25);
+  background: #fff;
+  filter: none;
+}
+
+.scenario.is-selected .label {
+  font-weight: 700;
+}
+
+/* Hide when container is hidden (we toggle via JS) */
+#scenarios.hidden { display: none; }
+
+/* Scenario title above avatar stage */
+.scenario-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: clamp(18px, 2.2vw, 24px);
+  letter-spacing: 0.2px;
+  color: var(--text-strong, #1b1b1d);
+  margin: 8px 0 6px;
+}
+
+#scenarios .scenario[data-scenario="introductions"] .thumb{background: center/cover no-repeat url('../assets/1_intro_not_elena.png');}
+#scenarios .scenario[data-scenario="feedback"] .thumb{background: center/cover no-repeat url('../assets/2_feedback.png');}
+#scenarios .scenario[data-scenario="happyhour"] .thumb{background: center/cover no-repeat url('../assets/3_happy_hour.png');}
+
+/* Hide plus button + "Ask anything" bar */
+#composerPlus,
+#composerInput { display: none !important; }
+
+/* Center the waveform button */
+#composer {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  gap: 0 !important;
+  margin: 2px auto 50px !important;
+}
+#micFab {
+  margin-inline: auto !important;
+  margin-top: 0 !important;
+  margin-bottom: 12px !important;
+}
+
+/* --- Enlarge & restyle the mic (waveform) button as a Play button --- */
+#micFab {
+  width: 84px !important;   /* 56px × 1.5 */
+  height: 84px !important;
+  border-radius: 50% !important;
+  position: relative !important;
+  background: var(--accent, #FF6B3D) !important;
+  border: 1px solid var(--rz-gray-100) !important;
+  box-shadow: var(--rz-shadow-soft);
+  cursor: pointer;
+  transition: transform var(--rz-trans-fast), filter var(--rz-trans-med), background-color var(--rz-trans-med);
+}
+
+/* Hide the existing waveform glyph inside the button */
+#micFab svg { display: none !important; }
+
+/* Draw a centered white triangle to mimic a play icon */
+#micFab::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-34%, -50%); /* slight bias right to feel optically centered */
+  width: 0; height: 0;
+  border-left: 28px solid #fff;      /* triangle width */
+  border-top: 18px solid transparent; /* triangle height */
+  border-bottom: 18px solid transparent;
+}
+
+#micFab:hover {
+  background: var(--accent-strong, #E85C2B) !important; /* solid peach/orange on hover */
+  filter: none;                    /* remove dimming so color is solid */
+}
+#micFab:active { transform: scale(0.98); }
+
+:root {
+  --accent: #FF6A4D;           /* coral-leaning orange */
+  --accent-strong: #E85A3B;    /* deeper on hover */
+}
+:root {
+  --accent: #FF6A4D;           /* coral-leaning orange */
+  --accent-strong: #E85A3B;    /* deeper on hover */
+}
+
+/* Hide the Play/Composer row whenever the Avatar panel is visible */
+#avatarPanel:not(.hidden) ~ #composer { display: none !important; }
