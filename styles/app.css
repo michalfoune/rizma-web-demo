@@ -546,3 +546,12 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 /* Animate when selected and when we add a temporary .clicked class */
 .scenario.is-selected .thumb { animation: scenario-ping .18s ease; }
 .scenario.clicked .thumb { animation: scenario-ping .18s ease; }
+
+/* Hide avatar manual controls */
+#avatarPanel #annieToken,
+#avatarPanel #annieConnect,
+#avatarPanel #annieDisconnect { display: none !important; }
+/* Keep the Avatar stop (X) button visible whenever the avatar panel is shown */
+#avatarPanel:not(.hidden) #endAvatar {
+  display: inline-flex !important;
+}

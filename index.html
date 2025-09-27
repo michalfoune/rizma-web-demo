@@ -31,7 +31,7 @@
       <input type="radio" name="mode" id="modeRealtime" class="seg-radio" />
       <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">gpt-realtime</label>
 
-      <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked/>
+      <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked />
       <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">CallAnnie</label>
     </div>
   </nav>
@@ -92,15 +92,14 @@
   <section id="avatarPanel" class="container hidden">
     <div class="card text-left">
       <div class="row-end align-center">
-        <button id="endAvatar" class="panel-close hide-until-connected pos-static ml-auto z-3" aria-label="End avatar session" title="End avatar session">
+        <button id="endAvatar" class="panel-close hide-until-connected pos-static ml-auto z-3"
+          aria-label="End avatar session" title="End avatar session">
           <span aria-hidden="true" style="font-size:20px;line-height:1">&times;</span>
           <span class="sr-only">End session</span>
         </button>
       </div>
       <div class="row mb-8" data-annie-control>
         <input id="annieToken" class="input" placeholder="Session access token" />
-      </div>
-      <div class="row mb-8" data-annie-control>
         <button id="annieConnect" class="btn" type="button">Connect</button>
         <button id="annieDisconnect" class="btn secondary" type="button">Disconnect</button>
       </div>
@@ -167,7 +166,7 @@
           btn.classList.toggle('is-selected', on);
           btn.setAttribute('aria-selected', String(on));
         });
-        document.dispatchEvent(new CustomEvent('scenario:selected', { detail: { scenario: s }}));
+        document.dispatchEvent(new CustomEvent('scenario:selected', { detail: { scenario: s } }));
       }
       if (scenarioBtns.length) {
         // default
@@ -176,7 +175,7 @@
       }
       // Optional hooks to hide/show choices when a session starts/ends.
       document.addEventListener('session:start', () => { if (scenariosEl) scenariosEl.classList.add('hidden'); });
-      document.addEventListener('session:end',   () => { if (scenariosEl) scenariosEl.classList.remove('hidden'); });
+      document.addEventListener('session:end', () => { if (scenariosEl) scenariosEl.classList.remove('hidden'); });
 
       // --- Scenario title handling ---
       const scenarioTitleEl = document.getElementById('scenarioTitle');
@@ -184,7 +183,7 @@
         try {
           const sel = document.querySelector('#scenarios .scenario.is-selected .label');
           if (sel && scenarioTitleEl) scenarioTitleEl.textContent = sel.textContent || '';
-        } catch {}
+        } catch { }
       }
       function showScenarioTitle(show) {
         if (!scenarioTitleEl) return;

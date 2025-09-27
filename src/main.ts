@@ -10,7 +10,7 @@ import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
 import { connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic } from './integrations/annie';
-import { Animato_UserID, Animato_ID } from './config/constants';
+import { Animato_UserID, Animato_ID, Animato_Test_Token } from './config/constants';
 import { httpLLM, httpTTS } from './api/openaiHttp';
 
 // Logger scopes & defaults
@@ -93,17 +93,51 @@ bindControls({
     onConnect: async () => {
         // Route mic/waveform by selected radio: Avatar vs Realtime
         if (isAvatarMode()) {
-            // If we were connected to Realtime, cleanly disconnect first
+            // If Realtime was active, cleanly disconnect first
             if (state.isConnected) {
-                try { disconnectRealtime(); } catch { }
+                try { disconnectRealtime(); } catch {}
                 showSessionUI(false);
             }
-            // Switch UI and show Annie controls; don’t auto-connect
+
+            // Switch UI to Avatar tab
             showTab('avatar');
-            // Show Annie controls; don’t auto-connect
-            document.getElementById('annieControls')?.classList.remove('hidden');
-            document.getElementById('avatarClose')?.classList.add('hidden');
-            setStatus('Idle');
+
+            // Auto-connect the avatar using constants from config
+            const token = Animato_Test_Token;
+            const userId = Animato_UserID;
+            const animatoId = Animato_ID;
+            const mic = true; // start with mic enabled
+            const root = document.getElementById('annieRoot') as HTMLElement | null;
+
+            if (!root || !token) {
+                uiLog.warn('Avatar auto-connect skipped (missing token or root)');
+                setStatus('Idle');
+                // Leave controls visible so user can fix manually
+                document.getElementById('annieControls')?.classList.remove('hidden');
+                document.getElementById('avatarClose')?.classList.add('hidden');
+                return;
+            }
+
+            try {
+                setStatus('Connecting…');
+                await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
+
+                // Hide manual controls and show close (X)
+                document.getElementById('annieControls')?.classList.add('hidden');
+                document.getElementById('avatarClose')?.classList.remove('hidden');
+
+                // Hide the composer/play bar and announce session start (hides scenarios via your listener)
+                document.getElementById('composer')?.classList.add('hidden');
+                document.dispatchEvent(new Event('session:start'));
+
+                setStatus('Listening…');
+            } catch (e) {
+                uiLog.error('Avatar auto-connect failed: %o', e);
+                setStatus('Error');
+                // Show controls so the user can try manually
+                document.getElementById('annieControls')?.classList.remove('hidden');
+                document.getElementById('avatarClose')?.classList.add('hidden');
+            }
             return;
         }
         // Default: OpenAI Realtime
@@ -184,7 +218,8 @@ onDomReady(() => {
 
     // Avatar buttons
     document.getElementById('annieConnect')?.addEventListener('click', async () => {
-        const token = (document.getElementById('annieToken') as HTMLInputElement)?.value?.trim();
+        const token = Animato_Test_Token;
+        // const token = (document.getElementById('annieToken') as HTMLInputElement)?.value?.trim();
         const userId = Animato_UserID; // fixed for now; could be made user-editable
         const animatoId = Animato_ID; // fixed for now; could be made user-editable
         const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
