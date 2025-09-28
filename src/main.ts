@@ -9,7 +9,7 @@ import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/s
 import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
-import { connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic } from './integrations/annie';
+import { connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage } from './integrations/annie';
 import { Animato_UserID, Animato_ID, Animato_Test_Token } from './config/constants';
 import { httpLLM, httpTTS } from './api/openaiHttp';
 
@@ -78,7 +78,65 @@ async function startRtpStats(pc: RTCPeerConnection): Promise<void> {
 const SYSTEM_PROMPT = "You are Elena, an empathetic supportive assistant. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
 
 const MEMORY_KEY = "rizma_memory_v1";
+
 const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12 messages)
+
+// --- Role‑play priming (prompt + kickoff line) ---
+const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
+  introductions: {
+    prompt: `You are Elena, a warm but concise team lead.
+Scenario: You a leading a role-play game where the user is introducing themselves to a new team. Call me Michal, not rizma. Rizma is the company, not my name.
+Goals: Welcome them, model a crisp intro, then invite theirs and continue the interaction and provide feedback. Stick to the role-play scenario, don't deviate into unrelated topics too much.
+Tone: professional, friendly, 1–2 sentences per turn.
+Ask one question at a time. Keep it practical.`,
+    kickoff: `Hi Michal, welcome to the team! I'm Elena, the VP of engineering. Could you start by telling us a bit about your background?`
+  },
+  feedback: {
+    prompt: `You are Elena, a calm manager.
+Scenario: the user practices delivering difficult feedback to a peer.
+Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing.
+Tone: direct, empathetic, brief turns. One question at a time.`,
+    kickoff: `Let’s try a short, specific opener—ready when you are.`
+  },
+  happyhour: {
+    prompt: `You are Elena, casual and warm.
+Scenario: the user practices light social chat at a work event.
+Goals: small talk, shared interests, gentle follow‑ups, natural exits.
+Tone: upbeat, brief turns. Avoid heavy topics.`,
+    kickoff: `Let’s ease in—mind if I start with a light question?`
+  }
+};
+
+function selectedScenarioId(): string {
+  const id = (window as any).selectedScenario ||
+    document.querySelector('#scenarios .scenario.is-selected')?.getAttribute('data-scenario') ||
+    'introductions';
+  return id;
+}
+function selectedScenarioTitle(): string {
+  return (document.querySelector('#scenarios .scenario.is-selected .label') as HTMLElement)?.textContent?.trim()
+    || 'Introduce Yourself';
+}
+
+async function primeRoleplay(): Promise<void> {
+  // Keep mic off while Elena delivers the kickoff line (prevents echo/feedback).
+  setAnnieMic(false);
+
+  const id = selectedScenarioId();
+  const title = selectedScenarioTitle();
+  const rp = ROLEPLAY_PROMPTS[id] || ROLEPLAY_PROMPTS.introductions;
+
+  const prompt = `${rp.prompt}\n\nCurrent scenario: ${title}.`;
+
+  // 1) Set behavior via vendor prompt channel (does not pollute dialogue history)
+  await sendAnniePrompt(prompt);
+
+  // 2) Have Elena speak first so your video starts cleanly
+  try { await sendAnnieAssistantMessage(rp.kickoff); } catch { /* if wrapper lacks assistant, skip */ }
+
+  // 3) Unmute shortly after to let the user speak
+  setTimeout(() => setAnnieMic(true), 800);
+}
 
 
 // Load from localStorage on startup and render any prior history
@@ -106,7 +164,7 @@ bindControls({
             const token = Animato_Test_Token;
             const userId = Animato_UserID;
             const animatoId = Animato_ID;
-            const mic = true; // start with mic enabled
+            const mic = false; // start muted; we will prime then unmute
             const root = document.getElementById('annieRoot') as HTMLElement | null;
 
             if (!root || !token) {
@@ -130,6 +188,7 @@ bindControls({
                 document.getElementById('composer')?.classList.add('hidden');
                 document.dispatchEvent(new Event('session:start'));
 
+                await primeRoleplay();
                 setStatus('Listening…');
             } catch (e) {
                 uiLog.error('Avatar auto-connect failed: %o', e);
