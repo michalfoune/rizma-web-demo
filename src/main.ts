@@ -42,6 +42,157 @@ const SERVER_VAD = true; // matches session.update turn_detection
 
 // Buffers for streaming transcripts
 let assistantBuf = "";
+// --- Lightweight post-session stats ----------------------------------------
+let statsStartIndex = 0;
+
+type ChatMsg = { role: string; content: string };
+interface EvalStats {
+  score: number; pass: boolean;
+  strengths: string[]; improvements: string[];
+  fillerPer100: number; toneHint: string; paceHint: string;
+  transcript: string;
+}
+
+function sliceSinceStart(msgs: ChatMsg[], start: number): ChatMsg[] {
+  if (!Array.isArray(msgs)) return [];
+  const i = Math.max(0, Math.min(start, msgs.length));
+  return msgs.slice(i);
+}
+
+function computeEvalStats(msgs: ChatMsg[]): EvalStats {
+  const userTurns = msgs.filter(m => m?.role?.toLowerCase() === 'user');
+  const text = userTurns.map(m => m.content || '').join(' ');
+  const words = (text.match(/\b\w+\b/g) || []).length;
+  const fillers = (text.match(/\b(um|uh|erm|like|you know|sort of|kinda|basically)\b/gi) || []).length;
+  const fillerPer100 = words ? (fillers / words) * 100 : 0;
+
+  const questions = (text.match(/\?/g) || []).length;
+  const exclaims = (text.match(/!/g) || []).length;
+
+  const strengths: string[] = [];
+  const improvements: string[] = [];
+  if (questions >= Math.max(1, Math.round(userTurns.length * 0.3))) strengths.push('Asked engaging questions');
+  if (fillerPer100 < 3) strengths.push('Clear delivery with minimal fillers; brief pauses signaled preparation and credibility.');
+  if (exclaims <= 2) strengths.push('Controlled, steady tone and pace; authoritative without rush, naturally confident.');
+  if (fillerPer100 >= 3) improvements.push('Reduce filler words');
+  if (questions < 1) improvements.push('Ask one open, team-centric question initially to shift from monologue to dialogue.');
+
+  const toneHint = exclaims > 3 ? 'Excited/strong' : (exclaims === 0 ? 'Calm/neutral' : 'Balanced');
+  const paceHint = words > 0 && userTurns.length > 0 && (words / userTurns.length) > 40 ? 'Dense—slow down' : 'Comfortable';
+
+  let score = 80;
+  score -= Math.min(15, Math.round(fillerPer100));
+  score += Math.min(10, questions * 2);
+  score = Math.max(40, Math.min(100, score));
+
+  return {
+    score, pass: score >= 70,
+    strengths: strengths.length ? strengths : ['Kept the conversation going'],
+    improvements: improvements.length ? improvements : ['Provide one concrete example'],
+    fillerPer100: Math.round(fillerPer100 * 10) / 10,
+    toneHint, paceHint,
+    transcript: text.trim(),
+  };
+}
+
+function showStatsPage(stats: EvalStats, title: string) {
+  const page = document.getElementById('statsPage');
+  if (!page) return;
+
+  const set = (id: string, v: string) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statsTitle', title || 'Role-Play Results');
+  set('statsScore', String(stats.score));
+  set('statsPass', stats.pass ? 'Pass' : 'Needs work');
+  set('statsFiller', `${stats.fillerPer100.toFixed(1)} / 100 words`);
+  set('statsTone', stats.toneHint);
+  set('statsPace', stats.paceHint);
+
+  const sUL = document.getElementById('statsStrengths');
+  const iUL = document.getElementById('statsImprovements');
+  if (sUL) sUL.innerHTML = stats.strengths.map(s => `<li>${s}</li>`).join('');
+  if (iUL) iUL.innerHTML = stats.improvements.map(s => `<li>${s}</li>`).join('');
+
+  const tr = document.getElementById('statsTranscript') as HTMLElement | null;
+  if (tr) tr.textContent = stats.transcript || 'Transcript unavailable for this session.';
+
+  page.classList.remove('hidden');
+  document.getElementById('avatarPanel')?.classList.add('hidden');
+  document.getElementById('panel')?.classList.add('hidden');
+  document.getElementById('composer')?.classList.add('hidden');
+  document.getElementById('scenarios')?.classList.add('hidden');
+  document.getElementById('micFab')?.classList.add('hidden');
+  document.getElementById('composer')?.classList.add('hidden');
+
+  document.getElementById('statsHome')?.addEventListener('click', () => {
+    page.classList.add('hidden');
+    document.getElementById('scenarios')?.classList.remove('hidden');
+    document.getElementById('composer')?.classList.remove('hidden');
+  }, { once: true });
+}
+// Cleanly stop any media and mic, and hide the Play row
+function stopMediaAndVoice(): void {
+  // 1) Kill vendor session + Realtime just in case
+  try { setAnnieMic(false); } catch {}
+  try { disconnectAnnie(); } catch {}
+  try { disconnectRealtime(); } catch {}
+
+  // 2) Stop/clear any audio/video under avatar/realtime containers
+  const stopMediaIn = (root: HTMLElement | null) => {
+    if (!root) return;
+    const media = root.querySelectorAll('video, audio');
+    media.forEach((el) => {
+      try { (el as HTMLMediaElement).pause?.(); } catch {}
+      try {
+        const ms = (el as any).srcObject as MediaStream | null;
+        if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      } catch {}
+      try { (el as any).srcObject = null; } catch {}
+      try { (el as HTMLMediaElement).currentTime = 0; } catch {}
+      (el as HTMLMediaElement).muted = true;
+      (el as HTMLMediaElement).removeAttribute('src');
+      (el as HTMLMediaElement).load?.();
+    });
+  };
+
+  stopMediaIn(document.getElementById('avatarPanel'));
+  stopMediaIn(document.getElementById('annieRoot'));
+  stopMediaIn(document.getElementById('panel'));
+
+  // 3) Explicitly stop remote/fallback sinks if present
+  const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
+  if (ra) {
+    try { ra.pause(); } catch {}
+    ra.muted = true; ra.currentTime = 0;
+    try { (ra as any).srcObject = null; } catch {}
+  }
+  const fa = document.getElementById('fallbackAudio') as HTMLAudioElement | null;
+  if (fa) { try { fa.pause(); } catch {}; fa.currentTime = 0; }
+
+  const selfCamEl = document.getElementById('selfCam') as HTMLVideoElement | null;
+  const ms = (selfCamEl?.srcObject as MediaStream) || null;
+  if (ms) {
+    try { ms.getTracks().forEach(t => t.stop()); } catch {}
+    try { if (selfCamEl) selfCamEl.srcObject = null; } catch {}
+  }
+
+  // 4) Hide Play row/button
+  const composer = document.getElementById('composer');
+  if (composer) composer.classList.add('hidden');
+  const micFabBtn = document.getElementById('micFab');
+  if (micFabBtn) micFabBtn.classList.add('hidden');
+}
+
+// Shared handler for the avatar ✕ button(s)
+function handleAvatarEndClick(): void {
+  // Announce end so any listeners can react
+  try { document.dispatchEvent(new Event('session:end')); } catch {}
+  // Ensure media is stopped and UI is tidy
+  stopMediaAndVoice();
+  // Compute and show lightweight results
+  const msgs = sliceSinceStart(memory.messages as any, statsStartIndex);
+  const stats = computeEvalStats(msgs as any);
+  showStatsPage(stats, selectedScenarioTitle());
+}
 // --- Types ---------------------------------------------------------------
 /** Minimal shape for Realtime events so TS doesn't complain (we only switch on `type`). */
 type RealtimeEvent = { type: string; [k: string]: any };
@@ -262,6 +413,20 @@ onDomReady(() => {
     showSessionUI(false);
     showTab('realtime');
 
+    // Mark when a live session starts so we can evaluate only the latest run
+    document.addEventListener('session:start', () => { statsStartIndex = memory.messages.length; });
+
+    // Close (X) on avatar → stop media and show results (support two possible IDs)
+    ['avatarClose','endAvatar'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', handleAvatarEndClick);
+    });
+
+    // Also react to a generic session:end if fired elsewhere
+    document.addEventListener('session:end', () => {
+      stopMediaAndVoice();
+    });
+
     // Tabs
     document.getElementById('tabRealtime')?.addEventListener('click', () => {
         showTab('realtime');
@@ -365,6 +530,7 @@ async function connectRealtime() {
                             showSessionUI(true);
                             setBtnRecordingUI(true);
                             setStatus('Listening...');
+                            document.dispatchEvent(new Event('session:start'));
                         }
                     });
                 },
@@ -402,6 +568,7 @@ async function connectRealtime() {
                 showSessionUI(true);
                 setBtnRecordingUI(true);
                 setStatus('Listening...');
+                document.dispatchEvent(new Event('session:start'));
             }
         });
         state.micStream.getAudioTracks().forEach(t => { t.enabled = true; pc.addTrack(t, state.micStream!); });

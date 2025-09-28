@@ -555,3 +555,29 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 #avatarPanel:not(.hidden) #endAvatar {
   display: inline-flex !important;
 }
+/* --- Stats page tweaks: score alignment and progress spacing --- */
+/* Right‑align numeric score and render as e.g. 80/100 */
+
+/* Make the score row a right‑justified flex row */
+#statsScore {
+  display: flex;
+  justify-content: flex-end;
+  margin-right: 125px
+}
+
+/* Keep 80 and /100 on one line, aligned by baseline */
+#statsScore .stats-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--rz-black);
+}
+
+/* Add breathing room above and below the green progress bar */
+#statsPage .progress,
+#statsProgress {
+  margin-top: 14px !important;   /* space above */
+  margin-bottom: 24px !important;/* space below */
+}

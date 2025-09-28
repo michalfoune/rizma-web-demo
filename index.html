@@ -129,6 +129,53 @@
     </button>
   </section>
 
+  <!-- Stats Page (shown after avatar session ends) -->
+  <section id="statsPage" class="container hidden" aria-labelledby="statsTitle">
+    <div class="card text-left">
+      <h2 id="statsTitle" class="title mb-8">Session Summary</h2>
+      <div class="row wrap gap-16">
+        <div class="panel flex-1 min-280">
+          <div class="row align-center gap-12">
+            <span id="statsScore" class="big-score mr-8"></span>
+            <div class="progress" style="flex:1; height:12px; background:#eee; border-radius:9999px; overflow:hidden;">
+              <div id="statsProgressFill" style="height:100%; width:0%; background:linear-gradient(90deg,#22c55e,#16a34a);"></div>
+            </div>
+            <span id="statsPass" class="dim ml-8 hidden">—</span>
+          </div>
+
+          <h3 class="mt-12">What you did well</h3>
+          <ul id="statsStrengths" class="list"></ul>
+
+          <h3 class="mt-12">Where to improve</h3>
+          <ul id="statsImprovements" class="list"></ul>
+        </div>
+
+        <div class="panel flex-1 min-280">
+          <h3>Delivery</h3>
+          <dl class="metrics">
+            <div class="metric"><dt>WPM</dt><dd id="statsWpm">—</dd></div>
+            <div class="metric"><dt>Fillers</dt><dd id="statsFillers">—</dd></div>
+            <div class="metric"><dt>Pacing</dt><dd id="statsPacing">—</dd></div>
+            <div class="metric"><dt>Tone</dt><dd id="statsTone">—</dd></div>
+            <div class="metric"><dt>Talk time</dt><dd id="statsTalkTime">—</dd></div>
+            <div class="metric"><dt>Interruptions</dt><dd id="statsInterruptions">—</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="mt-16">
+        <h3>Transcript</h3>
+        <div id="statsTranscript" class="transcript mono"></div>
+      </div>
+
+      <div class="row mt-16">
+        <button id="statsRetry" class="btn">Try again</button>
+        <button id="statsShare" class="btn secondary ml-8">Share</button>
+        <button id="statsExport" class="btn secondary ml-8">Download</button>
+        <button id="statsBack" class="link-btn ml-auto">Back to home</button>
+      </div>
+    </div>
+  </section>
   <!-- Footer -->
   <footer class="foot">
     <span>Secure &bull; Private &bull; Professional</span>
@@ -154,6 +201,14 @@
         // Delegate to the existing Disconnect button so the integration cleans up
         if (disconnectBtn) disconnectBtn.click();
         setAvatarConnected(false);
+        // Announce end and show the results page
+        try { document.dispatchEvent(new Event('session:end')); } catch {}
+        const stats = document.getElementById('statsPage');
+        if (stats) stats.classList.remove('hidden');
+        document.getElementById('avatarPanel')?.classList.add('hidden');
+        document.getElementById('panel')?.classList.add('hidden');
+        document.getElementById('composer')?.classList.add('hidden');
+        document.getElementById('scenarios')?.classList.add('hidden');
       });
 
       // --- Role play selection (lightweight) ---
@@ -212,6 +267,52 @@
       if (disconnectBtn) disconnectBtn.addEventListener('click', () => showScenarioTitle(false));
       if (endBtn) endBtn.addEventListener('click', () => showScenarioTitle(false));
       document.addEventListener('session:end', () => showScenarioTitle(false));
+
+      // --- Stats progress sync ---
+      (function initStatsProgress() {
+        const scoreEl = document.getElementById('statsScore');
+        const fillEl = document.getElementById('statsProgressFill');
+        const passEl = document.getElementById('statsPass');
+        const titleEl = document.getElementById('statsTitle');
+        if (!scoreEl || !fillEl) return;
+        function apply(val) {
+          const v = Math.max(0, Math.min(100, Number(val) || 0));
+          fillEl.style.width = v + '%';
+          // color hints by thresholds
+          let color = '#22c55e'; // green
+          if (v < 60) color = '#ef4444'; // red
+          else if (v < 75) color = '#f59e0b'; // amber
+          fillEl.style.background = `linear-gradient(90deg, ${color}, ${color})`;
+          const sel = document.querySelector('#scenarios .scenario.is-selected .label');
+          const rp = (sel && sel.textContent ? sel.textContent : 'Role-Play').trim();
+          const res = v >= 70 ? 'PASS' : 'NEEDS WORK';
+          if (titleEl) titleEl.textContent = `${rp}: ${res}`;
+          if (passEl) passEl.textContent = '';
+        }
+        // 1) apply initial
+        apply(scoreEl.textContent);
+        // 2) keep in sync if main.ts updates the text later
+        const mo = new MutationObserver(() => apply(scoreEl.textContent));
+        mo.observe(scoreEl, { childList: true, characterData: true, subtree: true });
+        // also respond when the results page is shown
+        document.addEventListener('session:end', () => apply(scoreEl.textContent));
+      })();
+      // --- Mock Delivery metrics for the summary page ---
+      function fillMockMetrics() {
+        const set = (id, val) => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = val;
+        };
+        set('statsWpm', '138');              // words per minute
+        set('statsFillers', '3 (um/uh)');    // filler count
+        set('statsPacing', 'Even');
+        set('statsTone', 'Calm/neutral');
+        set('statsTalkTime', '62%');
+        set('statsInterruptions', '1');
+      }
+      // Populate when a session ends (and if the page is opened directly)
+      document.addEventListener('session:end', fillMockMetrics);
+      fillMockMetrics();
     });
   </script>
   <script type="module" src="/src/main.ts"></script>
