@@ -270,9 +270,7 @@ function selectedScenarioTitle(): string {
 }
 
 async function primeRoleplay(): Promise<void> {
-  // Keep mic off while Elena delivers the kickoff line (prevents echo/feedback).
-  setAnnieMic(false);
-
+  // No forced mic mute/unmute; rely on AEC/VAD.
   const id = selectedScenarioId();
   const title = selectedScenarioTitle();
   const rp = ROLEPLAY_PROMPTS[id] || ROLEPLAY_PROMPTS.introductions;
@@ -284,9 +282,6 @@ async function primeRoleplay(): Promise<void> {
 
   // 2) Have Elena speak first so your video starts cleanly
   try { await sendAnnieAssistantMessage(rp.kickoff); } catch { /* if wrapper lacks assistant, skip */ }
-
-  // 3) Unmute shortly after to let the user speak
-  setTimeout(() => setAnnieMic(true), 800);
 }
 
 
@@ -315,7 +310,7 @@ bindControls({
             const token = Animato_Test_Token;
             const userId = Animato_UserID;
             const animatoId = Animato_ID;
-            const mic = false; // start muted; we will prime then unmute
+            const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
             const root = document.getElementById('annieRoot') as HTMLElement | null;
 
             if (!root || !token) {
