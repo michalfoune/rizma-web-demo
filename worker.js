@@ -6,6 +6,7 @@ export default {
       "Access-Control-Allow-Origin": origin || "*", // consider pinning to your site in prod
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "content-type, authorization",
+      "Access-Control-Max-Age": "86400",
       "Vary": "Origin",
     };
 
@@ -77,6 +78,51 @@ export default {
       }
 
       return new Response(resp.body, { status: resp.status, headers: outHeaders });
+    }
+
+    // Route: POST /annie-token -> mint CallAnnie/Animato client token server-side
+    if (req.method === "POST" && url.pathname === "/annie-token") {
+      try {
+        if (!env.ANIMATO_CLIENT_ID || !env.ANIMATO_API_KEY) {
+          return new Response(JSON.stringify({ error: "server_misconfigured", detail: "Missing ANIMATO_CLIENT_ID or ANIMATO_API_KEY" }), {
+            status: 500,
+            headers: { ...cors, "content-type": "application/json" },
+          });
+        }
+        // Optional payload from client { userId?: string, sessionId?: string }
+        let payload = {};
+        try { payload = await req.json(); } catch {}
+        const userId = payload.userId || "web_user";
+        const sessionId = payload.sessionId || `s_${Date.now()}`;
+
+        // Call vendor to mint a session token
+        const upstream = await fetch("https://api.callannie.ai/getClientToken", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            client_id: env.ANIMATO_CLIENT_ID,      // set via: wrangler secret put ANIMATO_CLIENT_ID
+            api_key_secret: env.ANIMATO_API_KEY,   // set via: wrangler secret put ANIMATO_API_KEY
+            user_id: userId,
+            session_id: sessionId,
+          }),
+        });
+
+        const text = await upstream.text();
+
+        // Pass through JSON (or error text) with CORS
+        return new Response(text, {
+          status: upstream.status,
+          headers: {
+            ...cors,
+            "content-type": "application/json",
+          },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "annie_token_failed", detail: String(e) }), {
+          status: 500,
+          headers: { ...cors, "content-type": "application/json" },
+        });
+      }
     }
 
     return new Response("Not found", { status: 404, headers: cors });

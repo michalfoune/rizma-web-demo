@@ -36,9 +36,9 @@ body {
 .brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 5px;
     justify-content: center;
-    margin-bottom: 8px
+    margin-bottom: 4px
 }
 
 .brand img {
@@ -54,7 +54,7 @@ body {
 .subtitle {
     margin-top: 6px;
     color: #7a7a81;
-    font-size: 14px
+    font-size: 8px
 }
 
 .avatar {
@@ -68,7 +68,7 @@ body {
 }
 
 h1.title {
-    margin: 6px 0 2px;
+    margin: 2px 0 0;
     font-size: 36px;
     line-height: 1.1
 }
@@ -173,16 +173,24 @@ p.lead {
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    display: grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
     background: var(--rz-gray-50);
     border: 1px solid var(--rz-gray-100);
     cursor: pointer;
-    transition: background var(--rz-trans-med)
+    transition: background var(--rz-trans-med);
 }
 
 .panel-close:hover {
     background: var(--rz-peach)
+}
+
+.panel-close > span {
+    display: block;
+    line-height: 1;
 }
 
 .foot {
@@ -214,10 +222,381 @@ p.lead {
     text-align: center;
     display: block;
     /* ensures margin auto centers it even if it gets width */
-    margin: 0 auto 24px;
+    margin: 2px auto 6px;
     /* center + space below */
-    color: var(--rz-gray-500);
+    color: var(--rz-gray-400, #9a9aa2);
     font-weight: 400;
     line-height: 1.4;
     font-size: 18px;
 }
+
+/* --- Avatar (Annie) stage with local self camera --- */
+.annie-stage{
+  position: relative;
+  width: 800px;
+  max-width: 100%;
+  aspect-ratio: 16/9;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg, 0 8px 40px rgba(0,0,0,.18));
+}
+.annie-root{
+  position: absolute;
+  inset: 0;
+}
+.self-cam{
+  position: absolute;
+  left: auto;
+  right: 12px;
+  bottom: 12px;
+  width: clamp(168px, 21.6%, 288px);
+  max-width: 36%;
+  aspect-ratio: 16/9;
+  background: #000;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  object-fit: cover;
+}
+@media (max-width: 720px){
+  .self-cam{ width: clamp(144px, 28.8vw, 216px); }
+}
+
+/* --- tiny utility classes moved from inline styles --- */
+.hidden { display: none !important; }
+.row-end { display: flex; justify-content: flex-end; position: relative; }
+.align-center { align-items: center; }
+.glyph { font-size: 20px; line-height: 1; display: inline-block; }
+.chat-scroll { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow: auto; padding-right: 6px; }
+.text-left { text-align: left; }
+.mb-8 { margin-bottom: 8px; }
+.mt-12 { margin-top: 12px; }
+.mt-10 { margin-top: 10px; }
+.ml-auto { margin-left: auto; }
+.ml-12 { margin-left: 12px; }
+.btn-circle-36 { width: 36px; height: 36px; border-radius: 10px; }
+.link-btn { font-size: 12px; color: var(--gray-600); background: transparent; border: none; text-decoration: underline; cursor: pointer; }
+.pos-static { position: static !important; }
+.z-3 { z-index: 3; }
+/* ensure the avatar close button we toggle starts hidden */
+.hide-until-connected { display: none; }
+
+/* --- Compact, low‑key toggle for the two top tabs (no HTML changes required) --- */
+/* If your HTML uses #tab-rt and #tab-annie buttons, these rules will style them
+   as a subtle segmented control. Add/remove the .active class in JS as you do now. */
+#tab-rt,
+#tab-annie {
+  appearance: none;
+  border: 1px solid var(--rz-gray-100);
+  background: var(--rz-gray-50);
+  color: #6a6a72;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  line-height: 1;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: var(--rz-shadow-soft);
+  transition: background var(--rz-trans-med), color var(--rz-trans-med), box-shadow var(--rz-trans-med);
+}
+#tab-rt:hover,
+#tab-annie:hover { background: var(--rz-gray-75, #f2f3f5); }
+#tab-rt.active,
+#tab-annie.active {
+  background: var(--rz-white);
+  color: var(--rz-black);
+  box-shadow: inset 0 0 0 1px var(--rz-gray-200), 0 1px 1px rgba(14,14,16,.04);
+}
+
+/* Optional wrapper if you already have a container around the tabs. Safe to keep even if unused. */
+.tab-group,
+.tabs-inline,
+.segmented {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+
+/* Center the mode toggle (radios/segmented) */
+.tabs { display: flex; justify-content: center; margin: 4px auto 6px; }
+.tabs + .card { margin-top: 6px; }
+.tabs .segmented, .segmented { margin-left: auto; margin-right: auto; }
+
+/* Tighten vertical padding for header + tabs containers only */
+header.container { padding-top: 12px; padding-bottom: 6px; }
+nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
+
+/* --- Avatar root sizing (Option A – CSS‑only) -------------------------------- */
+/* If you mount the SDK into an element with id="annieRoot", this enforces ~16:9 */
+#annieRoot {
+  width: min(100%, 900px);
+  aspect-ratio: 16 / 10;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative; /* so absolutely‑positioned children stay inside */
+  --annie-obj-x: 50%;   /* horizontal anchor */
+  --annie-obj-y: 40%;   /* keep eyes centred while filling top/bottom */
+  --annie-zoom: 0.95;   /* slight zoom-in to fully remove letterbox */
+}
+
+/* If you mount into a class .annie-root, keep earlier behavior but ensure media fills */
+.annie-root { position: absolute; inset: 0; }
+
+/* Make media drawn by the SDK fill the root cleanly */
+#annieRoot video,
+#annieRoot canvas,
+#annieRoot img,
+.annie-root video,
+.annie-root canvas,
+.annie-root img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* CHANGED from contain to eliminate side bars */
+  object-position: var(--annie-obj-x, 50%) var(--annie-obj-y, 40%);
+  transform: scale(var(--annie-zoom, 1));
+  transform-origin: var(--annie-obj-x, 50%) var(--annie-obj-y, 40%);
+  display: block;
+}
+
+/* --- Optional fit toggles: add .fit-contain or .fit-cover to #annieRoot or its parent --- */
+.fit-contain video,
+.fit-contain canvas,
+.fit-contain img {
+  object-fit: contain;
+  object-position: center;
+}
+
+.fit-cover video,
+.fit-cover canvas,
+.fit-cover img {
+  object-fit: cover;
+  object-position: center top;
+}
+
+/* --- Letterbox bleed fix (Option A) ---------------------------------------
+   Nudge media up slightly and grow its height a few pixels so any residual
+   1–3px top stripe is covered, without changing perceived zoom.
+   This targets only media directly inside #annieRoot and overrides earlier
+   absolute positioning that used `inset: 0`.
+--------------------------------------------------------------------------- */
+#annieRoot { overflow: hidden; }
+
+#annieRoot > video,
+#annieRoot > canvas,
+#annieRoot > img {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;                /* bleed upward */
+  bottom: auto;             /* override earlier inset: 0 */
+  width: 100%;
+  height: calc(100% + 4px); /* fill past top & bottom a hair */
+  object-fit: cover;
+}
+
+/* Role-plays row */
+.role-row {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  align-items: stretch;
+  margin: 16px 0 8px;
+}
+
+/* Each scenario box */
+.scenario {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  width: 180px;           /* ~thumbnail-ish; tweak as you like */
+}
+
+.scenario .thumb {
+  width: 100%;
+  height: 120px;          /* rectangle */
+  border-radius: 12px;
+  background: #f4f4f5;    /* placeholder until real images */
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+  filter: brightness(0.8) saturate(0.5);
+  transition: box-shadow .18s ease, transform .18s ease, background-color .18s ease, filter .18s ease;
+}
+
+.scenario .label {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #111;
+  text-align: center; /* center the title */
+}
+
+/* Selected state */
+.scenario.is-selected .thumb {
+  box-shadow: inset 0 0 0 2px var(--accent, #FF6B3D),
+              0 8px 22px rgba(255, 107, 61, 0.25);
+  background: #fff;
+  filter: none;
+}
+
+.scenario.is-selected .label {
+  font-weight: 700;
+}
+
+/* Hide when container is hidden (we toggle via JS) */
+#scenarios.hidden { display: none; }
+
+/* Scenario title above avatar stage */
+.scenario-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: clamp(18px, 2.2vw, 24px);
+  letter-spacing: 0.2px;
+  color: var(--text-strong, #1b1b1d);
+  margin: 8px 0 6px;
+}
+
+#scenarios .scenario[data-scenario="introductions"] .thumb{background: center/cover no-repeat url('../assets/1_intro_not_elena.png');}
+#scenarios .scenario[data-scenario="feedback"] .thumb{background: center/cover no-repeat url('../assets/2_feedback.png');}
+#scenarios .scenario[data-scenario="happyhour"] .thumb{background: center/cover no-repeat url('../assets/3_happy_hour.png');}
+
+/* Hide plus button + "Ask anything" bar */
+#composerPlus,
+#composerInput { display: none !important; }
+
+/* Center the waveform button */
+#composer {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  gap: 0 !important;
+  margin: 2px auto 50px !important;
+}
+#micFab {
+  margin-inline: auto !important;
+  margin-top: 0 !important;
+  margin-bottom: 12px !important;
+}
+
+/* --- Enlarge & restyle the mic (waveform) button as a Play button --- */
+#micFab {
+  width: 84px !important;   /* 56px × 1.5 */
+  height: 84px !important;
+  border-radius: 50% !important;
+  position: relative !important;
+  background: var(--accent, #FF6B3D) !important;
+  border: 1px solid var(--rz-gray-100) !important;
+  box-shadow: var(--rz-shadow-soft);
+  cursor: pointer;
+  transition: transform var(--rz-trans-fast), filter var(--rz-trans-med), background-color var(--rz-trans-med);
+}
+
+/* Hide the existing waveform glyph inside the button */
+#micFab svg { display: none !important; }
+
+/* Draw a centered white triangle to mimic a play icon */
+#micFab::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-34%, -50%); /* slight bias right to feel optically centered */
+  width: 0; height: 0;
+  border-left: 28px solid #fff;      /* triangle width */
+  border-top: 18px solid transparent; /* triangle height */
+  border-bottom: 18px solid transparent;
+}
+
+#micFab:hover {
+  background: var(--accent-strong, #E85C2B) !important; /* solid peach/orange on hover */
+  filter: none;                    /* remove dimming so color is solid */
+}
+#micFab:active { transform: scale(0.98); }
+
+:root {
+  --accent: #FF6A4D;           /* coral-leaning orange */
+  --accent-strong: #E85A3B;    /* deeper on hover */
+}
+:root {
+  --accent: #FF6A4D;           /* coral-leaning orange */
+  --accent-strong: #E85A3B;    /* deeper on hover */
+}
+
+/* Hide the Play/Composer row whenever the Avatar panel is visible */
+#avatarPanel:not(.hidden) ~ #composer { display: none !important; }
+.scenario:not(.is-selected):hover .thumb {
+  filter: none;                  /* remove wash */
+  background: #fff;              /* match selected bg */
+  /* keep subtle 1px neutral border; add orange glow like selected */
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06),
+              0 8px 22px rgba(255, 107, 61, 0.25);
+}
+.scenario:not(.is-selected):hover .label { font-weight: 700; }
+
+/* Re-triggerable accent flash when (re)clicking a scenario */
+@keyframes scenario-ping {
+  0% { box-shadow: inset 0 0 0 2px var(--accent, #FF6A4D), 0 0 0 rgba(255,106,77,0); }
+  100% { box-shadow: inset 0 0 0 2px var(--accent, #FF6A4D), 0 8px 22px rgba(255,106,77,.25); }
+}
+/* Animate when selected and when we add a temporary .clicked class */
+.scenario.is-selected .thumb { animation: scenario-ping .18s ease; }
+.scenario.clicked .thumb { animation: scenario-ping .18s ease; }
+
+/* Hide avatar manual controls */
+#avatarPanel #annieToken,
+#avatarPanel #annieConnect,
+#avatarPanel #annieDisconnect { display: none !important; }
+/* Keep the Avatar stop (X) button visible whenever the avatar panel is shown */
+#avatarPanel:not(.hidden) #endAvatar {
+  display: inline-flex !important;
+}
+/* --- Stats page tweaks: score alignment and progress spacing --- */
+/* Right‑align numeric score and render as e.g. 80/100 */
+
+/* Make the score row a right‑justified flex row */
+#statsScore {
+  display: flex;
+  justify-content: flex-end;
+  margin-right: 125px
+}
+
+/* Keep 80 and /100 on one line, aligned by baseline */
+#statsScore .stats-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--rz-black);
+}
+
+/* Add breathing room above and below the green progress bar */
+#statsPage .progress,
+#statsProgress {
+  margin-top: 14px !important;   /* space above */
+  margin-bottom: 24px !important;/* space below */
+}
+
+/* Uncomment to hide options to switch between gpt-realtime and CallAnnie SDK */
+/*
+#modeRealtime {
+  display: none;
+}
+
+#tabRealtime {
+  display: none;
+}
+
+#modeAvatar {
+  display: none;
+}
+
+#tabAvatar {
+  display: none;
+}
+*/
