@@ -581,3 +581,22 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
   margin-top: 14px !important;   /* space above */
   margin-bottom: 24px !important;/* space below */
 }
+
+/* Uncomment to hide options to switch between gpt-realtime and CallAnnie SDK */
+/*
+#modeRealtime {
+  display: none;
+}
+
+#tabRealtime {
+  display: none;
+}
+
+#modeAvatar {
+  display: none;
+}
+
+#tabAvatar {
+  display: none;
+}
+*/

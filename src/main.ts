@@ -25,6 +25,38 @@ const evtLog = rtcLog.child('evt');
 // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
 const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
 
+// --- Annie (Animato) token proxy base & helper (do not touch OpenAI endpoints)
+const PROXY_BASE = ((import.meta as any)?.env?.VITE_PROXY_BASE as string) || 'https://rizma-proxy.rizma.workers.dev';
+
+async function getAnnieToken(userId: string, animatoId: string): Promise<string> {
+  void animatoId;
+  // Always hit the Cloudflare Worker; never fall back to a relative path
+  const base = String(PROXY_BASE || '').replace(/\/+$/, '');
+  const url = `${base}/annie-token`;
+
+  const sessionId = `web_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, sessionId })
+    });
+    uiLog.info('Annie token POST %s → %d', url, res.status);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Annie token endpoint returned ${res.status}. URL=${url}. Body=${text.slice(0,200)}`);
+    }
+    const j = await res.json().catch(() => ({} as any));
+    const token = j?.token || j?.accessToken || j?.data?.token;
+    if (typeof token === 'string' && token.length > 0) return token;
+    throw new Error(`Annie token endpoint did not return a token field. URL=${url}. BodyKeys=${Object.keys(j||{}).join(',')}`);
+  } catch (e) {
+    uiLog.error('Annie token fetch failed: %o', e);
+    throw e;
+  }
+}
+
 let remoteAudioCleanup: (() => void) | null = null;
 
 const btn = getEl('micFab') as HTMLButtonElement | null;
@@ -42,7 +74,7 @@ const SERVER_VAD = true; // matches session.update turn_detection
 
 // Buffers for streaming transcripts
 let assistantBuf = "";
-// --- Lightweight post-session stats ----------------------------------------
+// --- Lightweight post-session stats ---
 let statsStartIndex = 0;
 
 type ChatMsg = { role: string; content: string };
@@ -226,7 +258,8 @@ async function startRtpStats(pc: RTCPeerConnection): Promise<void> {
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-const SYSTEM_PROMPT = "You are Elena, an empathetic supportive assistant. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
+const SYSTEM_PROMPT = "You are Sandra, the president of the U.S.A.."
+// const SYSTEM_PROMPT = "You are Elena, an empathetic supportive assistant to guide role-plays for employees. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
 
 const MEMORY_KEY = "rizma_memory_v1";
 
@@ -234,27 +267,23 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
-  introductions: {
-    prompt: `You are Elena, a warm but concise team lead.
-Scenario: You a leading a role-play game where the user is introducing themselves to a new team. Call me Michal, not rizma. Rizma is the company, not my name.
-Goals: Welcome them, model a crisp intro, then invite theirs and continue the interaction and provide feedback. Stick to the role-play scenario, don't deviate into unrelated topics too much.
-Tone: professional, friendly, 1–2 sentences per turn.
-Ask one question at a time. Keep it practical.`,
-    kickoff: `Hi Michal, welcome to the team! I'm Elena, the VP of engineering. Could you start by telling us a bit about your background?`
+  interview: {
+    prompt: "You are Sandra, the president of the U.S.A..",
+    kickoff: "Hi, I am Sandra, the presiden t of the U.S.A.."
+    // prompt: `You (as avatar) are Elena, a warm but concise VP of engineering. Scenario: You a leading a role-play game where the user is being interviewed for a new role as a tech lead. Call me Michal, not rizma. Rizma is the company, not my name. Goals: Welcome them, and start inteviewing for the role. Stick to the role-play scenario, don't deviate into unrelated topics too much. Tone: professional, friendly, 1–2 sentences per turn. Additional content you might say: * “Hey Michal—welcome. I’m Elena, VP of Engineering. My job is to turn roadmaps, requirements, and rumors into releases. Two of those are real.” * “I’m here for three things this quarter: ship what matters, delete what doesn’t, and bury a Jira board that’s learned to feel fear.” * “You’ll see we optimize for clear ownership, boring releases, and exciting metrics—in that order.” *“Logistics: we’re async-first. If a message from me lands at 06:00 your time, assume future-me was being helpful. If it lands at 03:00, assume Prod was being… itself.” Ask one question at a time. Keep it practical.`,
+    // kickoff: `Hi Michal, welcome! I'm Elena, the VP of engineering. Could you start by telling us a bit about your background?`
   },
   feedback: {
-    prompt: `You are Elena, a calm manager.
-Scenario: the user practices delivering difficult feedback to a peer.
-Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing.
-Tone: direct, empathetic, brief turns. One question at a time.`,
-    kickoff: `Let’s try a short, specific opener—ready when you are.`
+    prompt: "You are Sandra, the president of the U.S.A..",
+    kickoff: "Hi, I am Sandra, the presiden t of the U.S.A.." 
+    // prompt: `You are Elena, a calm manager. Scenario: the user practices delivering difficult feedback to a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, empathetic, brief turns. One question at a time.`,
+    // kickoff: `Let’s try a short, specific opener—ready when you are.`
   },
   happyhour: {
-    prompt: `You are Elena, casual and warm.
-Scenario: the user practices light social chat at a work event.
-Goals: small talk, shared interests, gentle follow‑ups, natural exits.
-Tone: upbeat, brief turns. Avoid heavy topics.`,
-    kickoff: `Let’s ease in—mind if I start with a light question?`
+    prompt: "You are Sandra, the president of the U.S.A..",
+    kickoff: "Hi, I am Sandra, the presiden t of the U.S.A.."
+    // prompt: `You are Elena, casual and warm. Scenario: the user practices light social chat at a work event. Goals: small talk, shared interests, gentle follow‑ups, natural exits. Tone: upbeat, brief turns. Avoid heavy topics.`,
+    // kickoff: `Let’s ease in—mind if I start with a light question?`
   }
 };
 
@@ -273,9 +302,9 @@ async function primeRoleplay(): Promise<void> {
   // No forced mic mute/unmute; rely on AEC/VAD.
   const id = selectedScenarioId();
   const title = selectedScenarioTitle();
-  const rp = ROLEPLAY_PROMPTS[id] || ROLEPLAY_PROMPTS.introductions;
+  const rp = ROLEPLAY_PROMPTS["interview"];
 
-  const prompt = `${rp.prompt}\n\nCurrent scenario: ${title}.`;
+  const prompt = `${rp.prompt} Current scenario: ${title}.`;
 
   // 1) Set behavior via vendor prompt channel (does not pollute dialogue history)
   await sendAnniePrompt(prompt);
@@ -306,13 +335,18 @@ bindControls({
             // Switch UI to Avatar tab
             showTab('avatar');
 
+            // Manual Token Fetch
+            // const token = Animato_Test_Token;
+
             // Auto-connect the avatar using constants from config
-            const token = Animato_Test_Token;
-            const userId = Animato_UserID;
+            // const userId = Animato_UserID;
+            const userId = "test_user"
             const animatoId = Animato_ID;
             const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
             const root = document.getElementById('annieRoot') as HTMLElement | null;
-
+            
+            // Automated Token Fetch 
+            const token = await getAnnieToken(userId, animatoId);
             if (!root || !token) {
                 uiLog.warn('Avatar auto-connect skipped (missing token or root)');
                 setStatus('Idle');
@@ -437,12 +471,11 @@ onDomReady(() => {
 
     // Avatar buttons
     document.getElementById('annieConnect')?.addEventListener('click', async () => {
-        const token = Animato_Test_Token;
-        // const token = (document.getElementById('annieToken') as HTMLInputElement)?.value?.trim();
         const userId = Animato_UserID; // fixed for now; could be made user-editable
         const animatoId = Animato_ID; // fixed for now; could be made user-editable
         const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
         const root = document.getElementById('annieRoot') as HTMLElement | null;
+        const token = await getAnnieToken(userId, animatoId);
         if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
         try {
             await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
@@ -578,7 +611,7 @@ async function connectRealtime() {
         if (!ld) throw new Error('Local description missing after setLocalDescription');
         const localSdp = ld.sdp;
 
-        // SDP exchange (same as you had)
+        // SDP exchange 
         const EPHEMERAL = await ephemeralPromise;
         const url = "https://api.openai.com/v1/realtime?model=gpt-realtime";
         httpLog.time('sdp-post');
@@ -594,6 +627,7 @@ async function connectRealtime() {
             throw new Error(body);
         }
         const answer = await sdpRes.text();
+        uiLog.info("Outputting text transcript from gpt-realtime model: %s", answer);
         if (pc.signalingState === 'have-local-offer') {
             pcLog.info('Answer received, applying…');
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
@@ -665,6 +699,7 @@ async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
             const text = evt?.transcript || evt?.text || evt?.item?.input_audio_transcription?.text || '';
             if (text?.trim()) {
                 addMessage(text.trim(), 'user');
+                uiLog.info("Adding message: %s: ", text.trim());
                 memory.messages.push({ role: 'user', content: text.trim() });
                 saveMemory();
             }
