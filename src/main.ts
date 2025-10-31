@@ -22,6 +22,121 @@ const dcLog = rtcLog.child('dc');
 const httpLog = rtcLog.child('http');
 const evtLog = rtcLog.child('evt');
 
+// --- Global audio/RTC kill‑switch instrumentation ---------------------------
+const KILL = {
+  pcs: new Set<RTCPeerConnection>(),
+  audioCtxs: new Set<any>(),
+  mediaEls: new Set<HTMLMediaElement>(),
+  streams: new Set<MediaStream>(),
+};
+
+function initKillSwitch(): void {
+  const g: any = globalThis as any;
+  if (g.__killSwitchInstalled) return;
+  g.__killSwitchInstalled = true;
+
+  // Track RTCPeerConnections (vendor SDK may open its own)
+  const OrigPC = g.RTCPeerConnection;
+  if (typeof OrigPC === 'function') {
+    const WrappedPC = function (...args: any[]) {
+      const pc = new OrigPC(...args);
+      try {
+        KILL.pcs.add(pc);
+        pc.addEventListener('connectionstatechange', () => {
+          if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+            KILL.pcs.delete(pc);
+          }
+        });
+      } catch {}
+      return pc;
+    } as any;
+    WrappedPC.prototype = OrigPC.prototype;
+    g.RTCPeerConnection = WrappedPC;
+  }
+
+  // Track AudioContexts (including Safari/WebKit)
+  const wrapAC = (name: string) => {
+    const C = g[name];
+    if (typeof C === 'function') {
+      const Wrapped = function (...args: any[]) {
+        const ctx = new C(...args);
+        try { KILL.audioCtxs.add(ctx); } catch {}
+        return ctx;
+      } as any;
+      Wrapped.prototype = C.prototype;
+      g[name] = Wrapped;
+    }
+  };
+  wrapAC('AudioContext');
+  wrapAC('webkitAudioContext');
+
+  // Track media elements as they start playing; also capture assigned MediaStreams
+  const HME: any = g.HTMLMediaElement?.prototype;
+  if (HME && typeof HME.play === 'function') {
+    const origPlay = HME.play;
+    HME.play = function (...a: any[]) {
+      try { KILL.mediaEls.add(this as HTMLMediaElement); } catch {}
+      return origPlay.apply(this, a);
+    };
+    const desc = Object.getOwnPropertyDescriptor(HME, 'srcObject') ||
+                 Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+    if (desc && desc.set) {
+      const origSet = desc.set;
+      Object.defineProperty(HME, 'srcObject', {
+        set(v: any) {
+          try { if (v && v instanceof MediaStream) KILL.streams.add(v); } catch {}
+          return origSet!.call(this, v);
+        },
+        get: desc.get
+      });
+    }
+  }
+
+  // Track getUserMedia streams
+  const md = g.navigator?.mediaDevices;
+  if (md && typeof md.getUserMedia === 'function') {
+    const origGUM = md.getUserMedia.bind(md);
+    md.getUserMedia = async (constraints: any) => {
+      const s = await origGUM(constraints);
+      try { KILL.streams.add(s); } catch {}
+      return s;
+    };
+  }
+}
+
+function hardStopAllTrackedMedia(): void {
+  // Pause & detach any tracked <audio>/<video>
+  KILL.mediaEls.forEach((el) => {
+    try { el.muted = true; } catch {}
+    try { el.pause?.(); } catch {}
+    try { (el as any).srcObject = null; } catch {}
+    try { el.removeAttribute('src'); } catch {}
+    try { el.load?.(); } catch {}
+  });
+  KILL.mediaEls.clear();
+
+  // Stop all captured MediaStreams
+  KILL.streams.forEach((s) => {
+    try { s.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+  });
+  KILL.streams.clear();
+
+  // Close/suspend all AudioContexts
+  KILL.audioCtxs.forEach((ctx: any) => {
+    try { ctx.close?.(); } catch {}
+    try { ctx.suspend?.(); } catch {}
+  });
+  KILL.audioCtxs.clear();
+
+  // Close all captured RTCPeerConnections
+  KILL.pcs.forEach((pc) => { try { pc.close(); } catch {} });
+  KILL.pcs.clear();
+}
+
+// Install the kill‑switch ASAP (before any vendor SDK creates contexts/PCs)
+initKillSwitch();
+// ---------------------------------------------------------------------------
+
 // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
 const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
 
@@ -160,12 +275,102 @@ function showStatsPage(stats: EvalStats, title: string) {
     document.getElementById('scenarios')?.classList.remove('hidden');
     document.getElementById('composer')?.classList.remove('hidden');
   }, { once: true });
+
+  // "Try again" → fully reset app state and return to launcher
+  document.getElementById('statsRetry')?.addEventListener('click', () => {
+    void tryAgainReset();
+  }, { once: true });
 }
 // Cleanly stop any media and mic, and hide the Play row
-function stopMediaAndVoice(): void {
+async function stopMediaAndVoice(): Promise<void> {
+  // First, stop anything we proactively tracked (PCs, AudioContexts, media elements, streams)
+  try { hardStopAllTrackedMedia(); } catch {}
+  // Immediately hard-mute anything that might still be playing
+  // Also cancel any Web Speech TTS that might be active
+  try { window.speechSynthesis?.cancel?.(); } catch {}
+  try {
+    document.querySelectorAll('audio,video').forEach((m) => {
+      const el = m as HTMLMediaElement;
+      try { el.muted = true; } catch {}
+      try { el.volume = 0; } catch {}
+      try { el.pause?.(); } catch {}
+      // Stop and detach any live MediaStream
+      try {
+        const ms = (el as any).srcObject as MediaStream | null;
+        if (ms) {
+          try { ms.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+        }
+      } catch {}
+      try { (el as any).srcObject = null; } catch {}
+      try { el.removeAttribute('src'); } catch {}
+      try { el.currentTime = 0; } catch {}
+      try { el.load?.(); } catch {}
+    });
+  } catch {}
+
+  // Attempt to close any WebAudio contexts the vendor SDK may have created in-page
+  function closePossibleAudioContexts() {
+    try {
+      const g: any = globalThis as any;
+      const maybeCtxs: any[] = [];
+      // Common names we have seen in vendor builds
+      ['audioCtx','audioContext','__audioCtx','__annieAudioContext','__ca_audioctx'].forEach(k => {
+        if (g && g[k] && typeof g[k].close === 'function') maybeCtxs.push(g[k]);
+      });
+      // Fallback: heuristic scan of globals (guarded)
+      try {
+        for (const k in g) {
+          const v = (g as any)[k];
+          if (!v) continue;
+          // Detect WebAudio contexts heuristically
+          const name = v?.constructor?.name || '';
+          if (name.includes('AudioContext') && typeof v.close === 'function') {
+            maybeCtxs.push(v);
+          }
+        }
+      } catch { /* ignore enumeration blockers */ }
+      maybeCtxs.forEach((ac: any) => { try { ac.close(); } catch {} });
+    } catch {}
+  }
+
+  // Hard-kill any vendor iframes globally, not only under #annieRoot
+  function nukeVendorIframes() {
+    try {
+      const frames = document.querySelectorAll('iframe');
+      frames.forEach((f) => {
+        try {
+          const src = (f as HTMLIFrameElement).src || '';
+          if (/callannie|animato/i.test(src) || (f.id && /annie|avatar/i.test(f.id))) {
+            try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
+            try { f.remove(); } catch {}
+          }
+        } catch {}
+      });
+    } catch {}
+  }
+
+  // Try to reach any globally-exposed vendor instance (defensive)
+  try {
+    const g: any = globalThis as any;
+    const av = g.avatar || g.Annie || g.__annie || g.__avatar;
+    if (av) {
+      try { av.disconnect?.(); } catch {}
+      try { av.destroy?.(); } catch {}
+      try { av.stop?.(); } catch {}
+    }
+  } catch {}
+
+  // Nuke cross-origin iframes early and close audio contexts to stop sound immediately
+  nukeVendorIframes();
+  closePossibleAudioContexts();
+
+  // Safety second-pass in case vendor created objects after our first sweep
+  try { hardStopAllTrackedMedia(); } catch {}
+
   // 1) Kill vendor session + Realtime just in case
   try { setAnnieMic(false); } catch {}
-  try { disconnectAnnie(); } catch {}
+  // Await the vendor disconnect to stop any TTS that may still be streaming
+  try { await Promise.resolve(disconnectAnnie() as any); } catch {}
   try { disconnectRealtime(); } catch {}
 
   // 2) Stop/clear any audio/video under avatar/realtime containers
@@ -184,11 +389,28 @@ function stopMediaAndVoice(): void {
       (el as HTMLMediaElement).removeAttribute('src');
       (el as HTMLMediaElement).load?.();
     });
+    // Nuke any SDK iframes to kill cross‑origin audio immediately
+    try {
+      const iframes = root.querySelectorAll('iframe');
+      iframes.forEach((f) => {
+        try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
+        try { f.remove(); } catch {}
+      });
+    } catch {}
   };
 
   stopMediaIn(document.getElementById('avatarPanel'));
   stopMediaIn(document.getElementById('annieRoot'));
+  // Hard teardown of Annie container DOM to forcefully detach any SDK-managed audio nodes
+  try {
+    const ar = document.getElementById('annieRoot');
+    if (ar) { ar.innerHTML = ''; }
+  } catch {}
   stopMediaIn(document.getElementById('panel'));
+
+  // Second pass: if anything slipped through, blank/remove again
+  try { nukeVendorIframes(); } catch {}
+  try { closePossibleAudioContexts(); } catch {}
 
   // 3) Explicitly stop remote/fallback sinks if present
   const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
@@ -212,14 +434,16 @@ function stopMediaAndVoice(): void {
   if (composer) composer.classList.add('hidden');
   const micFabBtn = document.getElementById('micFab');
   if (micFabBtn) micFabBtn.classList.add('hidden');
+
+  // Give the browser a tick to flush halted audio pipelines
+  try { await new Promise(r => setTimeout(r, 60)); } catch {}
 }
 
 // Shared handler for the avatar ✕ button(s)
-function handleAvatarEndClick(): void {
-  // Announce end so any listeners can react
+async function handleAvatarEndClick(): Promise<void> {
+  // Ensure media is stopped first, then announce end and render results
+  await stopMediaAndVoice();
   try { document.dispatchEvent(new Event('session:end')); } catch {}
-  // Ensure media is stopped and UI is tidy
-  stopMediaAndVoice();
   // Compute and show lightweight results
   const msgs = sliceSinceStart(memory.messages as any, statsStartIndex);
   const stats = computeEvalStats(msgs as any);
@@ -466,7 +690,7 @@ onDomReady(() => {
     // Close (X) on avatar → stop media and show results (support two possible IDs)
     ['avatarClose','endAvatar'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('click', handleAvatarEndClick);
+      if (el) el.addEventListener('click', () => { void handleAvatarEndClick(); });
     });
 
     // Also react to a generic session:end if fired elsewhere
@@ -792,6 +1016,38 @@ async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
     }
 }
 // --- End Realtime: WebRTC connection + event handling ---
+
+// Try again: reset all state and return to launcher UI
+async function tryAgainReset(): Promise<void> {
+  // 1) Kill any residual audio/video aggressively (avatar/iframes/contexts)
+  try { await stopMediaAndVoice(); } catch {}
+
+  // 2) Clear chat/memory and disconnect realtime
+  try { resetSession(); } catch {}
+
+  // 3) Return to the launcher (role‑play picker + Play bar)
+  const page = document.getElementById('statsPage');
+  page?.classList.add('hidden');
+
+  // Ensure both live panels are hidden and the composer is visible
+  document.getElementById('avatarPanel')?.classList.add('hidden');
+  document.getElementById('panel')?.classList.add('hidden');
+  document.getElementById('scenarios')?.classList.remove('hidden');
+  document.getElementById('composer')?.classList.remove('hidden');
+  document.getElementById('micFab')?.classList.remove('hidden');
+
+  // Reset Avatar control state
+  document.getElementById('annieControls')?.classList.remove('hidden');
+  document.getElementById('avatarClose')?.classList.add('hidden');
+  // Ensure Annie container is clean
+  try { document.getElementById('annieRoot')!.innerHTML = ''; } catch {}
+
+  // Go back to the default tabed UI (realtime launcher)
+  try { showTab('realtime'); } catch {}
+
+  // Reset stats window start for the next run
+  statsStartIndex = memory.messages.length;
+}
 
 function resetSession() {
     try { disconnectRealtime(); } catch { }

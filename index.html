@@ -29,10 +29,10 @@
   <nav class="tabs container" aria-label="Mode">
     <div class="segmented" role="tablist" aria-label="Mode">
       <input type="radio" name="mode" id="modeRealtime" class="seg-radio" />
-      <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">gpt-realtime</label>
+      <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">Voice Only</label>
 
       <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked />
-      <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">CallAnnie SDK</label>
+      <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">Avatar</label>
     </div>
   </nav>
 
@@ -40,7 +40,7 @@
   <section class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
-    <p class="lead">Interview • Tough Feedback • Small Talk</p>
+    <p class="lead">Interview • Feedback • Small Talk</p>
     <!-- hidden legacy button (kept for accessibility/testing) -->
     <button id="hold" aria-pressed="false" aria-label="Start Voice Session" class="mic-btn hidden">
       <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false" fill="currentColor">
@@ -170,16 +170,18 @@
 
       <div class="row mt-16">
         <button id="statsRetry" class="btn">Try again</button>
+        <!-- 
         <button id="statsShare" class="btn secondary ml-8">Share</button>
         <button id="statsExport" class="btn secondary ml-8">Download</button>
         <button id="statsBack" class="link-btn ml-auto">Back to home</button>
+        -->
       </div>
     </div>
   </section>
   <!-- Footer -->
   <footer class="foot">
     <span>Secure &bull; Private &bull; Professional</span>
-    <button id="reset" class="link-btn ml-12">Reset Session</button>
+    <!-- <button id="reset" class="link-btn ml-12">Reset Session</button> -->
   </footer>
 
   <script>
