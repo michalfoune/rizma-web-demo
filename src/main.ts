@@ -155,6 +155,19 @@ async function hardStopAllTrackedMedia(): Promise<void> {
 
 // Install the kill‑switch ASAP (before any vendor SDK creates contexts/PCs)
 initKillSwitch();
+// Suppress benign post‑close WebRTC rejections (SDK may still push ICE/SDP after we closed the PC)
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const msg = String((e as any)?.reason?.message || (e as any)?.reason || '');
+    if (
+      /RTCPeerConnection.*signalingState.*closed/i.test(msg) ||
+      /Failed to execute 'addIceCandidate'.*signalingState.*closed/i.test(msg) ||
+      /setRemoteDescription.*signalingState.*closed/i.test(msg)
+    ) {
+      e.preventDefault(); // ignore late SDP/ICE during teardown
+    }
+  });
+}
 // ---------------------------------------------------------------------------
 
 // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
@@ -306,6 +319,40 @@ function showStatsPage(stats: EvalStats, title: string) {
 let tearingDown = false;
 
 // === Media/Audio/SDK helpers (extracted for deduplication) ===
+
+/** Force-flush any buffered audio by briefly replacing the source with a silent stream. */
+async function flushBufferedAudio(el: HTMLMediaElement): Promise<void> {
+  try {
+    el.muted = true;
+    el.volume = 0;
+    // Create a short‑lived AudioContext with a silent source
+    const AC: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    const dest = ctx.createMediaStreamDestination();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0;            // silence
+    osc.connect(gain).connect(dest);
+    osc.start();
+    // Swap in the silent stream to flush any residual buffer
+    (el as any).srcObject = dest.stream;
+    try { await el.play(); } catch { /* autoplay lock or already paused */ }
+    // Give the browser a moment to commit the swap
+    await new Promise(r => setTimeout(r, 120));
+    // Blank back out
+    try { el.pause(); } catch {}
+    try { (el as any).srcObject = null; } catch {}
+    try { el.removeAttribute('src'); } catch {}
+    try { el.load?.(); } catch {}
+    // Tear down the context
+    try { osc.stop(); } catch {}
+    try { await ctx.close(); } catch {}
+  } catch {
+    /* ignore */
+  }
+}
+
 function stopMediaIn(root: HTMLElement | null): void {
   if (!root) return;
   const media = root.querySelectorAll('video, audio');
@@ -322,6 +369,8 @@ function stopMediaIn(root: HTMLElement | null): void {
     try { (el as HTMLMediaElement).removeAttribute('src'); } catch {}
     try { (el as HTMLMediaElement).currentTime = 0; } catch {}
     try { (el as HTMLMediaElement).load?.(); } catch {}
+    // Best-effort: flush any buffered tail audio
+    try { void flushBufferedAudio(el as HTMLMediaElement); } catch {}
   });
 
   // Remove any SDK iframes under this root (kills cross‑origin audio nodes)
@@ -390,33 +439,15 @@ async function stopMediaAndVoice(): Promise<void> {
   if (tearingDown) { uiLog.debug('stopMediaAndVoice: already running'); return; }
   tearingDown = true;
   try {
-    // 0) First pass: stop anything we proactively tracked
-    try { await hardStopAllTrackedMedia(); } catch {}
-
-    // 1) Kill obvious vendor surfaces quickly
-    nukeVendorIframes();
-    await closePossibleAudioContexts();
-
-    // Best‑effort to reach any globally exposed vendor instance
-    try {
-      const g: any = globalThis as any;
-      const av = g.avatar || g.Annie || g.__annie || g.__avatar;
-      if (av) {
-        try { av.disconnect?.(); } catch {}
-        try { av.destroy?.(); } catch {}
-        try { av.stop?.(); } catch {}
-      }
-    } catch {}
-
-    // Cancel any Web Speech TTS immediately
-    try { window.speechSynthesis?.cancel?.(); } catch {}
-
-    // 2) Explicit API‑level disconnects
+    // 1) Politely tell SDKs to stop first, then wait
     try { setAnnieMic(false); } catch {}
     try { await Promise.resolve(disconnectAnnie() as any); } catch {}
     try { disconnectRealtime(); } catch {}
 
-    // 3) Stop/clear any audio/video elements under our known roots
+    // Cancel any Web Speech TTS immediately
+    try { window.speechSynthesis?.cancel?.(); } catch {}
+
+    // 2) Stop/clear any audio/video elements under our known roots
     stopMediaIn(document.getElementById('avatarPanel'));
     stopMediaIn(document.getElementById('annieRoot'));
     stopMediaIn(document.getElementById('panel'));
@@ -439,7 +470,14 @@ async function stopMediaAndVoice(): Promise<void> {
       try { if (selfCamEl) selfCamEl.srcObject = null; } catch {}
     }
 
-    // 4) Hide the play row/button
+    // 3) Now nuke surfaces that might recreate audio after disconnect
+    nukeVendorIframes();
+    await closePossibleAudioContexts();
+
+    // 4) Safety pass: stop anything we proactively tracked (PCs, streams, contexts)
+    try { await hardStopAllTrackedMedia(); } catch {}
+
+    // 5) Hide the play row/button
     document.getElementById('composer')?.classList.add('hidden');
     document.getElementById('micFab')?.classList.add('hidden');
 
@@ -715,8 +753,14 @@ onDomReady(() => {
 
   // Close (X) on avatar → stop media and show results (support two possible IDs)
   ['avatarClose', 'endAvatar'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('click', () => { void handleAvatarEndClick(); });
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (!el) return;
+    el.addEventListener('click', async () => {
+      if (el.disabled) return;
+      el.disabled = true;
+      try { await handleAvatarEndClick(); }
+      finally { setTimeout(() => { el.disabled = false; }, 600); }
+    });
   });
 
   // Also react to a generic session:end if fired elsewhere
