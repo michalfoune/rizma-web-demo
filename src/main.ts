@@ -1,5 +1,6 @@
 import { state } from './state/appState';
-import { memory, saveMemory, loadMemory, clearMemory } from './state/memory';
+import { memory, saveMemory, loadMemory, clearMemory, setDefaultRunId, getMessages } from './state/memory';
+import type { ChatMessage as MemChatMessage, ChatRole } from './state/memory';
 import { createPeerConnection, waitForIce } from './rtc/connection';
 import { getEl, setText, setVisible, onDomReady } from './ui/dom';
 import { bindControls, setBtnRecordingUI, setStatus } from './ui/controls';
@@ -47,7 +48,7 @@ function initKillSwitch(): void {
             KILL.pcs.delete(pc);
           }
         });
-      } catch {}
+      } catch { }
       return pc;
     } as any;
     WrappedPC.prototype = OrigPC.prototype;
@@ -60,7 +61,7 @@ function initKillSwitch(): void {
     if (typeof C === 'function') {
       const Wrapped = function (...args: any[]) {
         const ctx = new C(...args);
-        try { KILL.audioCtxs.add(ctx); } catch {}
+        try { KILL.audioCtxs.add(ctx); } catch { }
         return ctx;
       } as any;
       Wrapped.prototype = C.prototype;
@@ -75,16 +76,16 @@ function initKillSwitch(): void {
   if (HME && typeof HME.play === 'function') {
     const origPlay = HME.play;
     HME.play = function (...a: any[]) {
-      try { KILL.mediaEls.add(this as HTMLMediaElement); } catch {}
+      try { KILL.mediaEls.add(this as HTMLMediaElement); } catch { }
       return origPlay.apply(this, a);
     };
     const desc = Object.getOwnPropertyDescriptor(HME, 'srcObject') ||
-                 Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+      Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
     if (desc && desc.set) {
       const origSet = desc.set;
       Object.defineProperty(HME, 'srcObject', {
         set(v: any) {
-          try { if (v && v instanceof MediaStream) KILL.streams.add(v); } catch {}
+          try { if (v && v instanceof MediaStream) KILL.streams.add(v); } catch { }
           return origSet!.call(this, v);
         },
         get: desc.get
@@ -98,38 +99,57 @@ function initKillSwitch(): void {
     const origGUM = md.getUserMedia.bind(md);
     md.getUserMedia = async (constraints: any) => {
       const s = await origGUM(constraints);
-      try { KILL.streams.add(s); } catch {}
+      try { KILL.streams.add(s); } catch { }
       return s;
     };
   }
 }
 
-function hardStopAllTrackedMedia(): void {
-  // Pause & detach any tracked <audio>/<video>
-  KILL.mediaEls.forEach((el) => {
+async function hardStopAllTrackedMedia(): Promise<void> {
+  // Pause & detach any tracked media elements
+  for (const el of Array.from(KILL.mediaEls)) {
     try { el.muted = true; } catch {}
     try { el.pause?.(); } catch {}
+    try {
+      const ms = (el as any).srcObject as MediaStream | null;
+      if (ms) {
+        try { ms.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+      }
+    } catch {}
     try { (el as any).srcObject = null; } catch {}
     try { el.removeAttribute('src'); } catch {}
     try { el.load?.(); } catch {}
-  });
+  }
   KILL.mediaEls.clear();
 
   // Stop all captured MediaStreams
-  KILL.streams.forEach((s) => {
-    try { s.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
-  });
+  for (const s of Array.from(KILL.streams)) {
+    try { s.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+  }
   KILL.streams.clear();
 
-  // Close/suspend all AudioContexts
-  KILL.audioCtxs.forEach((ctx: any) => {
-    try { ctx.close?.(); } catch {}
-    try { ctx.suspend?.(); } catch {}
-  });
+  // Close/suspend all AudioContexts safely
+  for (const ctx of Array.from(KILL.audioCtxs) as any[]) {
+    try {
+      // Prefer close(); only suspend if close() is not available.
+      if (typeof ctx.close === 'function') {
+        if (ctx.state !== 'closed') {
+          await Promise.resolve(ctx.close()).catch(() => {});
+        }
+      } else if (typeof ctx.suspend === 'function') {
+        if (ctx.state === 'running') {
+          await Promise.resolve(ctx.suspend()).catch(() => {});
+        }
+      }
+    } catch {}
+  }
   KILL.audioCtxs.clear();
 
   // Close all captured RTCPeerConnections
-  KILL.pcs.forEach((pc) => { try { pc.close(); } catch {} });
+  for (const pc of Array.from(KILL.pcs)) {
+    try { pc.getSenders?.().forEach((s: any) => { try { s.track?.stop?.(); } catch {} }); } catch {}
+    try { if (pc.connectionState !== 'closed') pc.close?.(); } catch {}
+  }
   KILL.pcs.clear();
 }
 
@@ -149,7 +169,7 @@ async function getAnnieToken(userId: string, animatoId: string): Promise<string>
   const base = String(PROXY_BASE || '').replace(/\/+$/, '');
   const url = `${base}/annie-token`;
 
-  const sessionId = `web_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+  const sessionId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   try {
     const res = await fetch(url, {
@@ -160,12 +180,12 @@ async function getAnnieToken(userId: string, animatoId: string): Promise<string>
     uiLog.info('Annie token POST %s → %d', url, res.status);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Annie token endpoint returned ${res.status}. URL=${url}. Body=${text.slice(0,200)}`);
+      throw new Error(`Annie token endpoint returned ${res.status}. URL=${url}. Body=${text.slice(0, 200)}`);
     }
     const j = await res.json().catch(() => ({} as any));
     const token = j?.token || j?.accessToken || j?.data?.token;
     if (typeof token === 'string' && token.length > 0) return token;
-    throw new Error(`Annie token endpoint did not return a token field. URL=${url}. BodyKeys=${Object.keys(j||{}).join(',')}`);
+    throw new Error(`Annie token endpoint did not return a token field. URL=${url}. BodyKeys=${Object.keys(j || {}).join(',')}`);
   } catch (e) {
     uiLog.error('Annie token fetch failed: %o', e);
     throw e;
@@ -191,8 +211,9 @@ const SERVER_VAD = true; // matches session.update turn_detection
 let assistantBuf = "";
 // --- Lightweight post-session stats ---
 let statsStartIndex = 0;
+let currentRunId: string | undefined;
 
-type ChatMsg = { role: string; content: string };
+
 interface EvalStats {
   score: number; pass: boolean;
   strengths: string[]; improvements: string[];
@@ -200,13 +221,13 @@ interface EvalStats {
   transcript: string;
 }
 
-function sliceSinceStart(msgs: ChatMsg[], start: number): ChatMsg[] {
+function sliceSinceStart(msgs: MemChatMessage[], start: number): MemChatMessage[] {
   if (!Array.isArray(msgs)) return [];
   const i = Math.max(0, Math.min(start, msgs.length));
   return msgs.slice(i);
 }
 
-function computeEvalStats(msgs: ChatMsg[]): EvalStats {
+function computeEvalStats(msgs: MemChatMessage[]): EvalStats {
   const userTurns = msgs.filter(m => m?.role?.toLowerCase() === 'user');
   const text = userTurns.map(m => m.content || '').join(' ');
   const words = (text.match(/\b\w+\b/g) || []).length;
@@ -281,204 +302,195 @@ function showStatsPage(stats: EvalStats, title: string) {
     void tryAgainReset();
   }, { once: true });
 }
-// Cleanly stop any media and mic, and hide the Play row
-async function stopMediaAndVoice(): Promise<void> {
-  // First, stop anything we proactively tracked (PCs, AudioContexts, media elements, streams)
-  try { hardStopAllTrackedMedia(); } catch {}
-  // Immediately hard-mute anything that might still be playing
-  // Also cancel any Web Speech TTS that might be active
-  try { window.speechSynthesis?.cancel?.(); } catch {}
+
+let tearingDown = false;
+
+// === Media/Audio/SDK helpers (extracted for deduplication) ===
+function stopMediaIn(root: HTMLElement | null): void {
+  if (!root) return;
+  const media = root.querySelectorAll('video, audio');
+  media.forEach((el) => {
+    try { (el as HTMLMediaElement).muted = true; } catch {}
+    try { (el as HTMLMediaElement).volume = 0; } catch {}
+    try { (el as HTMLMediaElement).pause?.(); } catch {}
+    // Stop/detach any live MediaStream
+    try {
+      const ms = (el as any).srcObject as MediaStream | null;
+      if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch {} });
+    } catch {}
+    try { (el as any).srcObject = null; } catch {}
+    try { (el as HTMLMediaElement).removeAttribute('src'); } catch {}
+    try { (el as HTMLMediaElement).currentTime = 0; } catch {}
+    try { (el as HTMLMediaElement).load?.(); } catch {}
+  });
+
+  // Remove any SDK iframes under this root (kills cross‑origin audio nodes)
   try {
-    document.querySelectorAll('audio,video').forEach((m) => {
-      const el = m as HTMLMediaElement;
-      try { el.muted = true; } catch {}
-      try { el.volume = 0; } catch {}
-      try { el.pause?.(); } catch {}
-      // Stop and detach any live MediaStream
-      try {
-        const ms = (el as any).srcObject as MediaStream | null;
-        if (ms) {
-          try { ms.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
-        }
-      } catch {}
-      try { (el as any).srcObject = null; } catch {}
-      try { el.removeAttribute('src'); } catch {}
-      try { el.currentTime = 0; } catch {}
-      try { el.load?.(); } catch {}
+    const iframes = root.querySelectorAll('iframe');
+    iframes.forEach((f) => {
+      try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
+      try { f.remove(); } catch {}
     });
   } catch {}
+}
 
-  // Attempt to close any WebAudio contexts the vendor SDK may have created in-page
-  function closePossibleAudioContexts() {
-    try {
-      const g: any = globalThis as any;
-      const maybeCtxs: any[] = [];
-      // Common names we have seen in vendor builds
-      ['audioCtx','audioContext','__audioCtx','__annieAudioContext','__ca_audioctx'].forEach(k => {
-        if (g && g[k] && typeof g[k].close === 'function') maybeCtxs.push(g[k]);
-      });
-      // Fallback: heuristic scan of globals (guarded)
-      try {
-        for (const k in g) {
-          const v = (g as any)[k];
-          if (!v) continue;
-          // Detect WebAudio contexts heuristically
-          const name = v?.constructor?.name || '';
-          if (name.includes('AudioContext') && typeof v.close === 'function') {
-            maybeCtxs.push(v);
-          }
-        }
-      } catch { /* ignore enumeration blockers */ }
-      maybeCtxs.forEach((ac: any) => { try { ac.close(); } catch {} });
-    } catch {}
-  }
-
-  // Hard-kill any vendor iframes globally, not only under #annieRoot
-  function nukeVendorIframes() {
-    try {
-      const frames = document.querySelectorAll('iframe');
-      frames.forEach((f) => {
-        try {
-          const src = (f as HTMLIFrameElement).src || '';
-          if (/callannie|animato/i.test(src) || (f.id && /annie|avatar/i.test(f.id))) {
-            try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
-            try { f.remove(); } catch {}
-          }
-        } catch {}
-      });
-    } catch {}
-  }
-
-  // Try to reach any globally-exposed vendor instance (defensive)
+/** Close/suspend any AudioContexts we can discover on window (defensive). */
+async function closePossibleAudioContexts(): Promise<void> {
   try {
     const g: any = globalThis as any;
-    const av = g.avatar || g.Annie || g.__annie || g.__avatar;
-    if (av) {
-      try { av.disconnect?.(); } catch {}
-      try { av.destroy?.(); } catch {}
-      try { av.stop?.(); } catch {}
+    const maybeCtxs: any[] = [];
+    // Common names we have seen in vendor builds
+    ['audioCtx', 'audioContext', '__audioCtx', '__annieAudioContext', '__ca_audioctx'].forEach(k => {
+      if (g && g[k]) maybeCtxs.push(g[k]);
+    });
+    // Fallback: heuristic scan of globals (guarded)
+    try {
+      for (const k in g) {
+        const v = (g as any)[k];
+        if (!v) continue;
+        const name = v?.constructor?.name || '';
+        if (name.includes('AudioContext') || name.includes('OfflineAudioContext')) {
+          maybeCtxs.push(v);
+        }
+      }
+    } catch {}
+    for (const ac of maybeCtxs) {
+      try {
+        if (typeof ac.close === 'function') {
+          if (ac.state !== 'closed') {
+            await Promise.resolve(ac.close()).catch(() => {});
+          }
+        } else if (typeof ac.suspend === 'function') {
+          if (ac.state === 'running') {
+            await Promise.resolve(ac.suspend()).catch(() => {});
+          }
+        }
+      } catch {}
     }
   } catch {}
+}
 
-  // Nuke cross-origin iframes early and close audio contexts to stop sound immediately
-  nukeVendorIframes();
-  closePossibleAudioContexts();
-
-  // Safety second-pass in case vendor created objects after our first sweep
-  try { hardStopAllTrackedMedia(); } catch {}
-
-  // 1) Kill vendor session + Realtime just in case
-  try { setAnnieMic(false); } catch {}
-  // Await the vendor disconnect to stop any TTS that may still be streaming
-  try { await Promise.resolve(disconnectAnnie() as any); } catch {}
-  try { disconnectRealtime(); } catch {}
-
-  // 2) Stop/clear any audio/video under avatar/realtime containers
-  const stopMediaIn = (root: HTMLElement | null) => {
-    if (!root) return;
-    const media = root.querySelectorAll('video, audio');
-    media.forEach((el) => {
-      try { (el as HTMLMediaElement).pause?.(); } catch {}
-      try {
-        const ms = (el as any).srcObject as MediaStream | null;
-        if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch {} });
-      } catch {}
-      try { (el as any).srcObject = null; } catch {}
-      try { (el as HTMLMediaElement).currentTime = 0; } catch {}
-      (el as HTMLMediaElement).muted = true;
-      (el as HTMLMediaElement).removeAttribute('src');
-      (el as HTMLMediaElement).load?.();
-    });
-    // Nuke any SDK iframes to kill cross‑origin audio immediately
-    try {
-      const iframes = root.querySelectorAll('iframe');
-      iframes.forEach((f) => {
-        try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
-        try { f.remove(); } catch {}
-      });
-    } catch {}
-  };
-
-  stopMediaIn(document.getElementById('avatarPanel'));
-  stopMediaIn(document.getElementById('annieRoot'));
-  // Hard teardown of Annie container DOM to forcefully detach any SDK-managed audio nodes
+/** Remove obvious vendor iframes globally. */
+function nukeVendorIframes(): void {
   try {
-    const ar = document.getElementById('annieRoot');
-    if (ar) { ar.innerHTML = ''; }
+    const frames = document.querySelectorAll('iframe');
+    frames.forEach((f) => {
+      try {
+        const src = (f as HTMLIFrameElement).src || '';
+        if (/callannie|animato/i.test(src) || (f.id && /annie|avatar/i.test(f.id))) {
+          try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
+          try { f.remove(); } catch {}
+        }
+      } catch {}
+    });
   } catch {}
-  stopMediaIn(document.getElementById('panel'));
+}
+// Cleanly stop any media and mic, and hide the Play row
+async function stopMediaAndVoice(): Promise<void> {
+  if (tearingDown) { uiLog.debug('stopMediaAndVoice: already running'); return; }
+  tearingDown = true;
+  try {
+    // 0) First pass: stop anything we proactively tracked
+    try { await hardStopAllTrackedMedia(); } catch {}
 
-  // Second pass: if anything slipped through, blank/remove again
-  try { nukeVendorIframes(); } catch {}
-  try { closePossibleAudioContexts(); } catch {}
+    // 1) Kill obvious vendor surfaces quickly
+    nukeVendorIframes();
+    await closePossibleAudioContexts();
 
-  // 3) Explicitly stop remote/fallback sinks if present
-  const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
-  if (ra) {
-    try { ra.pause(); } catch {}
-    ra.muted = true; ra.currentTime = 0;
-    try { (ra as any).srcObject = null; } catch {}
+    // Best‑effort to reach any globally exposed vendor instance
+    try {
+      const g: any = globalThis as any;
+      const av = g.avatar || g.Annie || g.__annie || g.__avatar;
+      if (av) {
+        try { av.disconnect?.(); } catch {}
+        try { av.destroy?.(); } catch {}
+        try { av.stop?.(); } catch {}
+      }
+    } catch {}
+
+    // Cancel any Web Speech TTS immediately
+    try { window.speechSynthesis?.cancel?.(); } catch {}
+
+    // 2) Explicit API‑level disconnects
+    try { setAnnieMic(false); } catch {}
+    try { await Promise.resolve(disconnectAnnie() as any); } catch {}
+    try { disconnectRealtime(); } catch {}
+
+    // 3) Stop/clear any audio/video elements under our known roots
+    stopMediaIn(document.getElementById('avatarPanel'));
+    stopMediaIn(document.getElementById('annieRoot'));
+    stopMediaIn(document.getElementById('panel'));
+
+    // Remote/fallback sinks
+    const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
+    if (ra) {
+      try { ra.pause(); } catch {}
+      ra.muted = true; ra.currentTime = 0;
+      try { (ra as any).srcObject = null; } catch {}
+    }
+    const fa = document.getElementById('fallbackAudio') as HTMLAudioElement | null;
+    if (fa) { try { fa.pause(); } catch {}; fa.currentTime = 0; }
+
+    // Self cam (if any)
+    const selfCamEl = document.getElementById('selfCam') as HTMLVideoElement | null;
+    const ms = (selfCamEl?.srcObject as MediaStream) || null;
+    if (ms) {
+      try { ms.getTracks().forEach(t => t.stop()); } catch {}
+      try { if (selfCamEl) selfCamEl.srcObject = null; } catch {}
+    }
+
+    // 4) Hide the play row/button
+    document.getElementById('composer')?.classList.add('hidden');
+    document.getElementById('micFab')?.classList.add('hidden');
+
+    // Give the browser a tick to flush halted audio pipelines
+    try { await new Promise(r => setTimeout(r, 60)); } catch {}
+  } finally {
+    // Release the re‑entrancy lock and clear trackers
+    tearingDown = false;
+    try {
+      KILL.mediaEls.clear();
+      KILL.streams.clear();
+      KILL.audioCtxs.clear();
+      KILL.pcs.clear();
+    } catch {}
   }
-  const fa = document.getElementById('fallbackAudio') as HTMLAudioElement | null;
-  if (fa) { try { fa.pause(); } catch {}; fa.currentTime = 0; }
-
-  const selfCamEl = document.getElementById('selfCam') as HTMLVideoElement | null;
-  const ms = (selfCamEl?.srcObject as MediaStream) || null;
-  if (ms) {
-    try { ms.getTracks().forEach(t => t.stop()); } catch {}
-    try { if (selfCamEl) selfCamEl.srcObject = null; } catch {}
-  }
-
-  // 4) Hide Play row/button
-  const composer = document.getElementById('composer');
-  if (composer) composer.classList.add('hidden');
-  const micFabBtn = document.getElementById('micFab');
-  if (micFabBtn) micFabBtn.classList.add('hidden');
-
-  // Give the browser a tick to flush halted audio pipelines
-  try { await new Promise(r => setTimeout(r, 60)); } catch {}
 }
 
 // Shared handler for the avatar ✕ button(s)
 async function handleAvatarEndClick(): Promise<void> {
   // Ensure media is stopped first, then announce end and render results
   await stopMediaAndVoice();
-  try { document.dispatchEvent(new Event('session:end')); } catch {}
+  try { document.dispatchEvent(new Event('session:end')); } catch { }
   // Compute and show lightweight results
-  const msgs = sliceSinceStart(memory.messages as any, statsStartIndex);
-  const stats = computeEvalStats(msgs as any);
+  saveMemory();
+  let msgs = getMessages({
+    runId: currentRunId ?? undefined,
+    roles: ['user', 'assistant'] as ChatRole[],
+  });
+
+  if (!msgs || msgs.length === 0) {
+    msgs = sliceSinceStart(memory.messages as MemChatMessage[], statsStartIndex);
+  }
+  /* Write out the transcript */
+  const userTurns = msgs.filter(m => m?.role?.toLowerCase() === 'user');
+  const text = userTurns.map(m => m.content || '').join(' ');
+  uiLog.info('SESSION TRANSCRIPT: ' + text);
+
+  const stats = computeEvalStats(msgs as MemChatMessage[]);
+
   showStatsPage(stats, selectedScenarioTitle());
 }
 // --- Types ---------------------------------------------------------------
 /** Minimal shape for Realtime events so TS doesn't complain (we only switch on `type`). */
-type RealtimeEvent = { type: string; [k: string]: any };
+type RealtimeEvent = { type: string;[k: string]: any };
 
 // --- Debug: remote audio & stats ---
 function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
-    if (!el) return;
-    el.addEventListener('play', () => uiLog.debug('remoteAudio: play'));
-    el.addEventListener('pause', () => uiLog.debug('remoteAudio: pause'));
-    el.addEventListener('loadedmetadata', () => uiLog.debug('remoteAudio: loadedmetadata'));
-}
-async function startRtpStats(pc: RTCPeerConnection): Promise<void> {
-    try {
-        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-        const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'audio');
-        setInterval(async () => {
-            if (sender) {
-                const stats = await sender.getStats();
-                for (const r of stats.values()) {
-                    if (r.type === 'outbound-rtp') pcLog.debug('RTP out bytesSent: %d', r.bytesSent);
-                }
-            }
-            if (receiver) {
-                const stats = await receiver.getStats();
-                for (const r of stats.values()) {
-                    if (r.type === 'inbound-rtp') pcLog.debug('RTP in  bytesReceived: %d', r.bytesReceived);
-                }
-            }
-        }, 2000);
-    } catch (e) { pcLog.warn('stats error %o', e); }
+  if (!el) return;
+  el.addEventListener('play', () => uiLog.debug('remoteAudio: play'));
+  el.addEventListener('pause', () => uiLog.debug('remoteAudio: pause'));
+  el.addEventListener('loadedmetadata', () => uiLog.debug('remoteAudio: loadedmetadata'));
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
@@ -540,6 +552,7 @@ function selectedScenarioTitle(): string {
     || 'Introduce Yourself';
 }
 
+// Kicks off Avatar Mode
 async function primeRoleplay(): Promise<void> {
   // No forced mic mute/unmute; rely on AEC/VAD.
   const id = selectedScenarioId();
@@ -564,466 +577,489 @@ renderHistory(memory);
 // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
 // function setBtnRecordingUI(rec) {...}
 
+// --- AVATAR & GPT-REALTIME HANDLER ---
 bindControls({
-    onConnect: async () => {
-        // Route mic/waveform by selected radio: Avatar vs Realtime
-        if (isAvatarMode()) {
-            // If Realtime was active, cleanly disconnect first
-            if (state.isConnected) {
-                try { disconnectRealtime(); } catch {}
-                showSessionUI(false);
-            }
+  onConnect: async () => {
+    // AVATAR MODE
+    if (isAvatarMode()) {
+      // If Realtime was active, cleanly disconnect first
+      if (state.isConnected) {
+        try { disconnectRealtime(); } catch { }
+        showSessionUI(false);
+      }
 
-            // Switch UI to Avatar tab
-            showTab('avatar');
+      // Switch UI to Avatar tab
+      showTab('avatar');
 
-            // Manual Token Fetch
-            // const token = Animato_Test_Token;
+      // Manual Token Fetch
+      // const token = Animato_Test_Token;
 
-            // Auto-connect the avatar using constants from config
-            // const userId = Animato_UserID;
-            const userId = "test_user"
-            const animatoId = Animato_ID;
-            const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
-            const root = document.getElementById('annieRoot') as HTMLElement | null;
-            
-            // Automated Token Fetch 
-            const token = await getAnnieToken(userId, animatoId);
-            if (!root || !token) {
-                uiLog.warn('Avatar auto-connect skipped (missing token or root)');
-                setStatus('Idle');
-                // Leave controls visible so user can fix manually
-                document.getElementById('annieControls')?.classList.remove('hidden');
-                document.getElementById('avatarClose')?.classList.add('hidden');
-                return;
-            }
+      // Auto-connect the avatar using constants from config
+      // const userId = Animato_UserID;
+      const userId = "test_user"
+      const animatoId = Animato_ID;
+      const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
+      const root = document.getElementById('annieRoot') as HTMLElement | null;
 
-            try {
-                setStatus('Connecting…');
-                await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
+      // Automated Token Fetch 
+      const token = await getAnnieToken(userId, animatoId);
+      if (!root || !token) {
+        uiLog.warn('Avatar auto-connect skipped (missing token or root)');
+        setStatus('Idle');
+        // Leave controls visible so user can fix manually
+        document.getElementById('annieControls')?.classList.remove('hidden');
+        document.getElementById('avatarClose')?.classList.add('hidden');
+        return;
+      }
 
-                // Hide manual controls and show close (X)
-                document.getElementById('annieControls')?.classList.add('hidden');
-                document.getElementById('avatarClose')?.classList.remove('hidden');
+      try {
+        setStatus('Connecting…');
+        const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        currentRunId = runId;
+        setDefaultRunId(runId);
+        statsStartIndex = memory.messages.length;
 
-                // Hide the composer/play bar and announce session start (hides scenarios via your listener)
-                document.getElementById('composer')?.classList.add('hidden');
-                document.dispatchEvent(new Event('session:start'));
+        await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
 
-                await primeRoleplay();
-                setStatus('Listening…');
-            } catch (e) {
-                uiLog.error('Avatar auto-connect failed: %o', e);
-                setStatus('Error');
-                // Show controls so the user can try manually
-                document.getElementById('annieControls')?.classList.remove('hidden');
-                document.getElementById('avatarClose')?.classList.add('hidden');
-            }
-            return;
-        }
-        // Default: OpenAI Realtime
-        await connectRealtime();
-        state.isRecording = true;
-        setStatus('Listening...');
-    },
-    onToggleMic: async (next) => {
-        if (isAvatarMode()) {
-            setAnnieMic(next);                  // make the waveform/mic button control the avatar mic
-            setStatus(next ? 'Listening…' : 'Muted');
-            return;
-        }
-        // existing realtime toggle
-        const track = firstAudioTrack(state.micStream);
-        if (track) track.enabled = next;
-        state.isRecording = !!next;
-        setStatus(next ? 'Listening…' : 'Idle');
-    },
-    onEnd: () => {
-        disconnectRealtime();
-    },
-    onReset: () => {
-        clearMemory(); // your existing reset logic
+        // Hide manual controls and show close (X)
+        document.getElementById('annieControls')?.classList.add('hidden');
+        document.getElementById('avatarClose')?.classList.remove('hidden');
+
+        // Hide the composer/play bar and announce session start (hides scenarios via your listener)
+        document.getElementById('composer')?.classList.add('hidden');
+        document.dispatchEvent(new Event('session:start'));
+
+        // Kick off the avatar role-play
+        await primeRoleplay();
+        setStatus('Listening…');
+      } catch (e) {
+        uiLog.error('Avatar auto-connect failed: %o', e);
+        setStatus('Error');
+        // Show controls so the user can try manually
+        document.getElementById('annieControls')?.classList.remove('hidden');
+        document.getElementById('avatarClose')?.classList.add('hidden');
+      }
+      return;
     }
+    // DEFAULT GPT-REALTIME MODE
+    await connectRealtime();
+    state.isRecording = true;
+    setStatus('Listening...');
+  },
+  onToggleMic: async (next) => {
+    if (isAvatarMode()) {
+      setAnnieMic(next);                  // make the waveform/mic button control the avatar mic
+      setStatus(next ? 'Listening…' : 'Muted');
+      return;
+    }
+    // existing realtime toggle
+    const track = firstAudioTrack(state.micStream);
+    if (track) track.enabled = next;
+    state.isRecording = !!next;
+    setStatus(next ? 'Listening…' : 'Idle');
+  },
+  onEnd: () => {
+    disconnectRealtime();
+  },
+  onReset: () => {
+    clearMemory(); // your existing reset logic
+  }
 });
 // --- End adaptive controls ---
 
 // Hide session UI initially + wire tabs (Realtime vs Avatar)
 function showTab(which: 'realtime' | 'avatar') {
-    const avatarPanel = document.getElementById('avatarPanel');
-    const panel = document.getElementById('panel');
-    const composer = document.getElementById('composer');
-    const tRealtime = document.getElementById('tabRealtime');
-    const tAvatar = document.getElementById('tabAvatar');
-    if (!avatarPanel || !panel || !composer) return;
+  const avatarPanel = document.getElementById('avatarPanel');
+  const panel = document.getElementById('panel');
+  const composer = document.getElementById('composer');
+  const tRealtime = document.getElementById('tabRealtime');
+  const tAvatar = document.getElementById('tabAvatar');
+  if (!avatarPanel || !panel || !composer) return;
 
-    const toAvatar = which === 'avatar';
-    // Show/hide avatar panel
-    avatarPanel.classList.toggle('hidden', !toAvatar);
+  const toAvatar = which === 'avatar';
+  // Show/hide avatar panel
+  avatarPanel.classList.toggle('hidden', !toAvatar);
 
-    // Realtime views based on connection state
-    if (toAvatar) {
-        panel.classList.add('hidden');
-        composer.classList.add('hidden');
-    } else {
-        panel.classList.toggle('hidden', !state.isConnected);
-        composer.classList.toggle('hidden', !!state.isConnected);
-    }
+  // Realtime views based on connection state
+  if (toAvatar) {
+    panel.classList.add('hidden');
+    composer.classList.add('hidden');
+  } else {
+    panel.classList.toggle('hidden', !state.isConnected);
+    composer.classList.toggle('hidden', !!state.isConnected);
+  }
 
-    tRealtime?.classList.toggle('active', !toAvatar);
-    tAvatar?.classList.toggle('active', toAvatar);
+  tRealtime?.classList.toggle('active', !toAvatar);
+  tAvatar?.classList.toggle('active', toAvatar);
 }
 
 // Small mode check helper – reads the Avatar radio directly from DOM
 function isAvatarMode(): boolean {
-    const el = document.getElementById('modeAvatar') as HTMLInputElement | null;
-    return !!el?.checked;
+  const el = document.getElementById('modeAvatar') as HTMLInputElement | null;
+  return !!el?.checked;
 }
 
 onDomReady(() => {
-    // Default: hide panel, show composer, and select Realtime tab
-    showSessionUI(false);
+  // Default: hide panel, show composer, and select Realtime tab
+  showSessionUI(false);
+  showTab('realtime');
+
+  // Mark when a live session starts so we can evaluate only the latest run and tag with a run id
+  document.addEventListener('session:start', () => {
+    statsStartIndex = memory.messages.length;
+    if (!currentRunId) {
+      currentRunId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      setDefaultRunId(currentRunId);
+    }
+  });
+
+  // Close (X) on avatar → stop media and show results (support two possible IDs)
+  ['avatarClose', 'endAvatar'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => { void handleAvatarEndClick(); });
+  });
+
+  // Also react to a generic session:end if fired elsewhere
+  document.addEventListener('session:end', () => {
+    stopMediaAndVoice();
+  });
+
+  // Tabs
+  document.getElementById('tabRealtime')?.addEventListener('click', () => {
     showTab('realtime');
+  });
+  document.getElementById('tabAvatar')?.addEventListener('click', async () => {
+    // Avoid double-binding mic/audio: disconnect realtime if active
+    if (state.isConnected) {
+      try { disconnectRealtime(); } catch { }
+      showSessionUI(false);
+    }
+    showTab('avatar');
+  });
 
-    // Mark when a live session starts so we can evaluate only the latest run
-    document.addEventListener('session:start', () => { statsStartIndex = memory.messages.length; });
+  // Avatar buttons
+  document.getElementById('annieConnect')?.addEventListener('click', async () => {
+    const userId = Animato_UserID; // fixed for now; could be made user-editable
+    const animatoId = Animato_ID; // fixed for now; could be made user-editable
+    const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
+    const root = document.getElementById('annieRoot') as HTMLElement | null;
+    const token = await getAnnieToken(userId, animatoId);
+    if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
+    try {
+      const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      currentRunId = runId;
+      setDefaultRunId(runId);
+      statsStartIndex = memory.messages.length;
 
-    // Close (X) on avatar → stop media and show results (support two possible IDs)
-    ['avatarClose','endAvatar'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('click', () => { void handleAvatarEndClick(); });
-    });
+      await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
+      // Hide controls only after a successful connection
+      document.getElementById('annieControls')?.classList.add('hidden');
+      document.getElementById('avatarClose')?.classList.remove('hidden');
+    } catch (e) { console.warn('Avatar connect failed', e); }
+  });
 
-    // Also react to a generic session:end if fired elsewhere
-    document.addEventListener('session:end', () => {
-      stopMediaAndVoice();
-    });
+  document.getElementById('annieDisconnect')?.addEventListener('click', () => {
+    try { disconnectAnnie(); } catch { }
+    document.getElementById('annieControls')?.classList.remove('hidden');
+    document.getElementById('avatarClose')?.classList.add('hidden');
+  });
 
-    // Tabs
-    document.getElementById('tabRealtime')?.addEventListener('click', () => {
-        showTab('realtime');
-    });
-    document.getElementById('tabAvatar')?.addEventListener('click', async () => {
-        // Avoid double-binding mic/audio: disconnect realtime if active
-        if (state.isConnected) {
-            try { disconnectRealtime(); } catch { }
-            showSessionUI(false);
-        }
-        showTab('avatar');
-    });
-
-    // Avatar buttons
-    document.getElementById('annieConnect')?.addEventListener('click', async () => {
-        const userId = Animato_UserID; // fixed for now; could be made user-editable
-        const animatoId = Animato_ID; // fixed for now; could be made user-editable
-        const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
-        const root = document.getElementById('annieRoot') as HTMLElement | null;
-        const token = await getAnnieToken(userId, animatoId);
-        if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
-        try {
-            await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en' });
-            // Hide controls only after a successful connection
-            document.getElementById('annieControls')?.classList.add('hidden');
-            document.getElementById('avatarClose')?.classList.remove('hidden');
-        } catch (e) { console.warn('Avatar connect failed', e); }
-    });
-
-    document.getElementById('annieDisconnect')?.addEventListener('click', () => {
-        try { disconnectAnnie(); } catch { }
-        document.getElementById('annieControls')?.classList.remove('hidden');
-        document.getElementById('avatarClose')?.classList.add('hidden');
-    });
-
-    document.getElementById('annieSend')?.addEventListener('click', () => {
-        const msg = (document.getElementById('annieMessage') as HTMLInputElement)?.value ?? '';
-        if (msg.trim()) sendAnnieUserMessage(msg.trim());
-    });
+  document.getElementById('annieSend')?.addEventListener('click', () => {
+    const msg = (document.getElementById('annieMessage') as HTMLInputElement)?.value ?? '';
+    if (msg.trim()) sendAnnieUserMessage(msg.trim());
+  });
 });
 
 // --- Response triggering over DataChannel ---
 let responseRequested = false;
 
 async function getEphemeralKey() {
-    httpLog.time('session');
-    // Your Cloudflare Worker should create an ephemeral session token by POSTing to
-    // https://api.openai.com/v1/realtime/sessions with your server-side API key.
-    // It must return JSON that includes { client_secret: { value } }.
-    const r = await fetch(SESSION_URL, { method: 'POST' });
-    httpLog.timeEnd('session');
-    const ct = r.headers.get('content-type') || '';
-    httpLog.info('session POST %d %s', r.status, ct);
-    if (!r.ok) {
-        const txt = await r.text();
-        httpLog.error('session failed %d: %s', r.status, txt.slice(0, 200));
-        throw new Error(`Session POST failed ${r.status}. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
-    }
-    if (!ct.includes('application/json')) {
-        const txt = await r.text();
-        httpLog.warn('session non-JSON: %s', txt.slice(0, 200));
-        throw new Error(`Session endpoint returned non-JSON. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
-    }
-    // Body may contain model + client_secret
-    const j = await r.json();
-    httpLog.debug('session body: %o', j);
-    if (j?.model) console.log('Realtime session model:', j.model);
-    const key = j?.client_secret?.value || j?.client_secret?.secret || j?.client_secret;
-    if (!key) throw new Error(`No ephemeral key in /session response: ${JSON.stringify(j).slice(0, 500)}`);
-    return key;
+  httpLog.time('session');
+  // Your Cloudflare Worker should create an ephemeral session token by POSTing to
+  // https://api.openai.com/v1/realtime/sessions with your server-side API key.
+  // It must return JSON that includes { client_secret: { value } }.
+  const r = await fetch(SESSION_URL, { method: 'POST' });
+  httpLog.timeEnd('session');
+  const ct = r.headers.get('content-type') || '';
+  httpLog.info('session POST %d %s', r.status, ct);
+  if (!r.ok) {
+    const txt = await r.text();
+    httpLog.error('session failed %d: %s', r.status, txt.slice(0, 200));
+    throw new Error(`Session POST failed ${r.status}. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
+  }
+  if (!ct.includes('application/json')) {
+    const txt = await r.text();
+    httpLog.warn('session non-JSON: %s', txt.slice(0, 200));
+    throw new Error(`Session endpoint returned non-JSON. URL=${SESSION_URL}. Content-Type=${ct}. Body=${txt.slice(0, 500)}`);
+  }
+  // Body may contain model + client_secret
+  const j = await r.json();
+  httpLog.debug('session body: %o', j);
+  if (j?.model) console.log('Realtime session model:', j.model);
+  const key = j?.client_secret?.value || j?.client_secret?.secret || j?.client_secret;
+  if (!key) throw new Error(`No ephemeral key in /session response: ${JSON.stringify(j).slice(0, 500)}`);
+  return key;
 }
 
 async function connectRealtime() {
-    if (state.isConnected || state.isConnecting) return;
-    state.isConnecting = true;
-    statusEl && (statusEl.textContent = 'Connecting...');
-    btn && (btn.disabled = true);
+  if (state.isConnected || state.isConnecting) return;
+  state.isConnecting = true;
+  statusEl && (statusEl.textContent = 'Connecting...');
+  btn && (btn.disabled = true);
 
-    rtcLog.group('connect');
-    uiLog.info('Connect requested');
+  rtcLog.group('connect');
+  uiLog.info('Connect requested');
 
-    try {
-        // Mic
-        state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  try {
+    // Mic
+    state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        // PC (handlers are just your existing lambdas)
-        state.pc = createPeerConnection(
-            {
-                onTrack: (e) => {
-                    pcLog.debug('ontrack %s streams=%d', e.track.kind, e.streams?.length || 0);
-                },
-                onDataChannel: (ch) => {
-                    dcLog.info('remote datachannel');
-                    wireDataChannel(ch, handleServerEvent, {
-                        instructions: SYSTEM_PROMPT,
-                        voice: 'marin',
-                        modalities: ['audio', 'text'],
-                        useServerVAD: SERVER_VAD,
-                        onOpen: () => {
-                            showSessionUI(true);
-                            setBtnRecordingUI(true);
-                            setStatus('Listening...');
-                            document.dispatchEvent(new Event('session:start'));
-                        }
-                    });
-                },
-                onIceCandidate: (c) => pcLog.debug('ICE cand %s', c.type || c.candidate),
-                onState: (pc) => {
-                    pcLog.info('state sig=%s ice=%s pc=%s', pc.signalingState, pc.iceConnectionState, pc.connectionState);
-                    if (pc.connectionState === 'connected') {
-                        uiLog.info('PC connected → showing panel');
-                        showSessionUI(true);
-                        setBtnRecordingUI(true);
-                        setStatus('Listening...');
-                    }
-                }
-            }
-        );
-        const pc = state.pc!;
-        // Attach remote audio sink via helper (handles stream, duplicates, autoplay unlock)
-        const remoteAudio = document.getElementById('remoteAudio') as HTMLAudioElement | null;
-        if (!remoteAudio) throw new Error('#remoteAudio not found');
-        remoteAudioCleanup?.();
-        remoteAudioCleanup = attachRemoteAudio(remoteAudio, pc);
-        attachRemoteAudioDebug(remoteAudio);
-
-        // Start ephemeral token fetch in parallel
-        const ephemeralPromise = getEphemeralKey();
-
-        // Media + data
-        pc.addTransceiver('audio', { direction: 'sendrecv' });
-        wireDataChannel(pc.createDataChannel('oai-events'), handleServerEvent, {
+    // PC (handlers are just your existing lambdas)
+    state.pc = createPeerConnection(
+      {
+        onTrack: (e) => {
+          pcLog.debug('ontrack %s streams=%d', e.track.kind, e.streams?.length || 0);
+        },
+        onDataChannel: (ch) => {
+          dcLog.info('remote datachannel');
+          wireDataChannel(ch, handleServerEvent, {
             instructions: SYSTEM_PROMPT,
             voice: 'marin',
             modalities: ['audio', 'text'],
             useServerVAD: SERVER_VAD,
             onOpen: () => {
-                showSessionUI(true);
-                setBtnRecordingUI(true);
-                setStatus('Listening...');
-                document.dispatchEvent(new Event('session:start'));
+              showSessionUI(true);
+              setBtnRecordingUI(true);
+              setStatus('Listening...');
+              document.dispatchEvent(new Event('session:start'));
             }
-        });
-        state.micStream.getAudioTracks().forEach(t => { t.enabled = true; pc.addTrack(t, state.micStream!); });
-
-        // Offer + bounded ICE wait
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        const iceResult = await waitForIce(pc, 3000);
-        rtcLog.info('ICE gathering: %s', iceResult);
-
-        const ld = pc.localDescription;
-        if (!ld) throw new Error('Local description missing after setLocalDescription');
-        const localSdp = ld.sdp;
-
-        // SDP exchange 
-        const EPHEMERAL = await ephemeralPromise;
-        const url = "https://api.openai.com/v1/realtime?model=gpt-realtime";
-        httpLog.time('sdp-post');
-        const sdpRes = await fetch(url, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${EPHEMERAL}`, 'Content-Type': 'application/sdp' },
-            body: localSdp
-        });
-        httpLog.timeEnd('sdp-post');
-        if (!sdpRes.ok) {
-            const body = await sdpRes.text();
-            httpLog.error('SDP POST failed %d %s', sdpRes.status, body.slice(0, 200));
-            throw new Error(body);
-        }
-        const answer = await sdpRes.text();
-        uiLog.info("Outputting text transcript from gpt-realtime model: %s", answer);
-        if (pc.signalingState === 'have-local-offer') {
-            pcLog.info('Answer received, applying…');
-            await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-            state.isConnected = true;
-            setStatus('Listening...');
+          });
+        },
+        onIceCandidate: (c) => pcLog.debug('ICE cand %s', c.type || c.candidate),
+        onState: (pc) => {
+          pcLog.info('state sig=%s ice=%s pc=%s', pc.signalingState, pc.iceConnectionState, pc.connectionState);
+          if (pc.connectionState === 'connected') {
+            uiLog.info('PC connected → showing panel');
             showSessionUI(true);
             setBtnRecordingUI(true);
-            pcLog.info('Answer applied');
-            uiLog.info('Connected; UI set to Listening');
-            const iceState = state.pc?.iceConnectionState ?? 'unknown';
-            if (isPCIceConnected(state.pc)) {
-                pcLog.info('ICE connected/completed');
-            } else {
-                pcLog.warn('ICE not yet connected (state=%s)', iceState);
-            }
+            setStatus('Listening...');
+          }
         }
+      }
+    );
+    const pc = state.pc!;
+    // Attach remote audio sink via helper (handles stream, duplicates, autoplay unlock)
+    const remoteAudio = document.getElementById('remoteAudio') as HTMLAudioElement | null;
+    if (!remoteAudio) throw new Error('#remoteAudio not found');
+    remoteAudioCleanup?.();
+    remoteAudioCleanup = attachRemoteAudio(remoteAudio, pc);
+    attachRemoteAudioDebug(remoteAudio);
 
-        // (rest of your success path: startRtpStats, set UI flags, etc.)
+    // Start ephemeral token fetch in parallel
+    const ephemeralPromise = getEphemeralKey();
+
+    // Media + data
+    pc.addTransceiver('audio', { direction: 'sendrecv' });
+    wireDataChannel(pc.createDataChannel('oai-events'), handleServerEvent, {
+      instructions: SYSTEM_PROMPT,
+      voice: 'marin',
+      modalities: ['audio', 'text'],
+      useServerVAD: SERVER_VAD,
+      onOpen: () => {
+        showSessionUI(true);
+        setBtnRecordingUI(true);
+        setStatus('Listening...');
+        document.dispatchEvent(new Event('session:start'));
+      }
+    });
+    state.micStream.getAudioTracks().forEach(t => { t.enabled = true; pc.addTrack(t, state.micStream!); });
+
+    // Offer + bounded ICE wait
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const iceResult = await waitForIce(pc, 3000);
+    rtcLog.info('ICE gathering: %s', iceResult);
+
+    const ld = pc.localDescription;
+    if (!ld) throw new Error('Local description missing after setLocalDescription');
+    const localSdp = ld.sdp;
+
+    // SDP exchange 
+    const EPHEMERAL = await ephemeralPromise;
+    const url = "https://api.openai.com/v1/realtime?model=gpt-realtime";
+    httpLog.time('sdp-post');
+    const sdpRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${EPHEMERAL}`, 'Content-Type': 'application/sdp' },
+      body: localSdp
+    });
+    httpLog.timeEnd('sdp-post');
+    if (!sdpRes.ok) {
+      const body = await sdpRes.text();
+      httpLog.error('SDP POST failed %d %s', sdpRes.status, body.slice(0, 200));
+      throw new Error(body);
     }
-    catch (err) {
-        setStatus('Idle');
-        setBtnRecordingUI(false);
-        showSessionUI(false);           // ensure we don't leave the panel open
-        throw err;
+    const answer = await sdpRes.text();
+    uiLog.info("Outputting text transcript from gpt-realtime model: %s", answer);
+    if (pc.signalingState === 'have-local-offer') {
+      pcLog.info('Answer received, applying…');
+      await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+      state.isConnected = true;
+      setStatus('Listening...');
+      showSessionUI(true);
+      setBtnRecordingUI(true);
+      pcLog.info('Answer applied');
+      uiLog.info('Connected; UI set to Listening');
+      const iceState = state.pc?.iceConnectionState ?? 'unknown';
+      if (isPCIceConnected(state.pc)) {
+        pcLog.info('ICE connected/completed');
+      } else {
+        pcLog.warn('ICE not yet connected (state=%s)', iceState);
+      }
     }
-    finally {
-        rtcLog.groupEnd();
-        state.isConnecting = false;
-        btn && (btn.disabled = false);;
-    }
+
+    // (rest of your success path: startRtpStats, set UI flags, etc.)
+  }
+  catch (err) {
+    setStatus('Idle');
+    setBtnRecordingUI(false);
+    showSessionUI(false);           // ensure we don't leave the panel open
+    throw err;
+  }
+  finally {
+    rtcLog.groupEnd();
+    state.isConnecting = false;
+    btn && (btn.disabled = false);;
+  }
 }
 
 function disconnectRealtime() {
-    uiLog.info('Disconnect requested');
-    pcLog.debug('Closing PC, stopping %d tracks', state.micStream?.getTracks?.().length || 0);
-    try {
-        state.pc && state.pc.close();
-    } catch { }
-    if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
-    remoteAudioCleanup?.();
-    remoteAudioCleanup = null;
-    state.pc = null; state.dc = null; state.micStream = null;
-    state.isConnected = false; state.isRecording = false;
-    setBtnRecordingUI(false);
-    statusEl && (statusEl.textContent = 'Idle');
-    showSessionUI(false);
+  uiLog.info('Disconnect requested');
+  pcLog.debug('Closing PC, stopping %d tracks', state.micStream?.getTracks?.().length || 0);
+  try {
+    state.pc && state.pc.close();
+  } catch { }
+  if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
+  remoteAudioCleanup?.();
+  remoteAudioCleanup = null;
+  state.pc = null; state.dc = null; state.micStream = null;
+  state.isConnected = false; state.isRecording = false;
+  setBtnRecordingUI(false);
+  statusEl && (statusEl.textContent = 'Idle');
+  showSessionUI(false);
 }
 
+// Handler for GPT-REALTIME events
 async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
-    evtLog.trace('evt %s', evt?.type);
-    // Common realtime events we care about:
-    // - input_audio_buffer.speech_started / speech_stopped
-    // - conversation.item.input_audio_transcription.completed (user transcript)
-    // - response.audio_transcript.delta / .done (assistant transcript)
-    // - response.done (assistant finalization; often includes full transcript)
-    switch (evt.type) {
-        case 'input_audio_buffer.speech_started':
-            statusEl && (statusEl.textContent = 'Listening...');
-            responseRequested = false; // new turn started
-            break;
-        case 'input_audio_buffer.speech_stopped':
-            statusEl && (statusEl.textContent = 'Thinking...');
-            if (!SERVER_VAD && !responseRequested) {
-                sendResponseCreate();
-                responseRequested = true;
-            }
-            break;
-        case 'conversation.item.input_audio_transcription.completed': {
-            const text = evt?.transcript || evt?.text || evt?.item?.input_audio_transcription?.text || '';
-            if (text?.trim()) {
-                addMessage(text.trim(), 'user');
-                uiLog.info("Adding message: %s: ", text.trim());
-                memory.messages.push({ role: 'user', content: text.trim() });
-                saveMemory();
-            }
-            if (!SERVER_VAD && !responseRequested) {
-                sendResponseCreate();
-                responseRequested = true;
-            }
-            break;
-        }
-        case 'response.audio_transcript.delta': {
-            const d = evt?.delta || '';
-            if (d) assistantBuf += d;
-            break;
-        }
-        case 'response.audio_transcript.done':
-        case 'response.done': {
-            // If server reports failure, fall back to HTTP pipeline
-            /*
-            const status = evt?.response?.status;
-            if (status === 'failed') {
-              console.error('Realtime response failed:', evt?.response?.status_details || evt);
-              await fallbackReplyFromHTTP();
-              const track = micStream?.getAudioTracks?.()[0];
-              if (track) track.enabled = true;
-              setBtnRecordingUI(true);
-              break;
-            }
-            */
-            // Success path: use transcript if present; else buffered deltas
-            const explicit = evt?.transcript || evt?.response?.output_text || '';
-            const finalText = (explicit && explicit.trim()) || assistantBuf.trim();
-            if (finalText) {
-                addMessage(finalText, 'elena');
-                memory.messages.push({ role: 'elena', content: finalText });
-                saveMemory();
-                assistantBuf = '';
-            }
-            statusEl && (statusEl.textContent = 'Idle');
-            const track = firstAudioTrack(state.micStream);
-            if (track) track.enabled = true;
-            setBtnRecordingUI(true);
-            break;
-        }
-        case 'response.output_text.delta': {
-            const d = evt?.delta || '';
-            if (d) assistantBuf += d;
-            break;
-        }
-        case 'response.output_text.done': {
-            const finalText = (evt?.text || '').trim();
-            if (finalText) {
-                addMessage(finalText, 'elena');
-                memory.messages.push({ role: 'elena', content: finalText });
-                saveMemory();
-                assistantBuf = '';
-            }
-            statusEl && (statusEl.textContent = 'Idle');
-            const track = firstAudioTrack(state.micStream);
-            if (track) track.enabled = true;
-            setBtnRecordingUI(true);
-            break;
-        }
-        case 'error': {
-            log.error('Realtime error: %o', evt);
-            statusEl && (statusEl.textContent = 'Error');
-            break;
-        }
-        default:
-            // Other events can be logged for debugging if needed
-            evtLog.trace('other %s', evt?.type);
-            break;
+  uiLog.info('Received event: %s', evt?.type);
+  evtLog.trace('evt %s', evt?.type);
+  // Common realtime events we care about:
+  // - input_audio_buffer.speech_started / speech_stopped
+  // - conversation.item.input_audio_transcription.completed (user transcript)
+  // - response.audio_transcript.delta / .done (assistant transcript)
+  // - response.done (assistant finalization; often includes full transcript)
+  switch (evt.type) {
+    case 'input_audio_buffer.speech_started':
+      statusEl && (statusEl.textContent = 'Listening...');
+      responseRequested = false; // new turn started
+      break;
+    case 'input_audio_buffer.speech_stopped':
+      statusEl && (statusEl.textContent = 'Thinking...');
+      if (!SERVER_VAD && !responseRequested) {
+        sendResponseCreate();
+        responseRequested = true;
+      }
+      break;
+    case 'conversation.item.input_audio_transcription.completed': {
+      uiLog.info('User transcript completed: %s', evt.transcript || evt.text || evt.item?.input_audio_transcription?.text || '');
+      const text = evt?.transcript || evt?.text || evt?.item?.input_audio_transcription?.text || '';
+      if (text?.trim()) {
+        addMessage(text.trim(), 'user');
+        uiLog.info("Adding message: %s: ", text.trim());
+        memory.messages.push({ role: 'user', content: text.trim() });
+        saveMemory();
+      }
+      if (!SERVER_VAD && !responseRequested) {
+        sendResponseCreate();
+        responseRequested = true;
+      }
+      break;
     }
+    case 'response.audio_transcript.delta': {
+      uiLog.info('Audio transcript delta: %o', evt?.delta || '');
+      const d = evt?.delta || '';
+      if (d) assistantBuf += d;
+      break;
+    }
+    case 'response.audio_transcript.done':
+    case 'response.done': {
+      // If server reports failure, fall back to HTTP pipeline
+      /*
+      const status = evt?.response?.status;
+      if (status === 'failed') {
+        console.error('Realtime response failed:', evt?.response?.status_details || evt);
+        await fallbackReplyFromHTTP();
+        const track = micStream?.getAudioTracks?.()[0];
+        if (track) track.enabled = true;
+        setBtnRecordingUI(true);
+        break;
+      }
+      */
+      // Success path: use transcript if present; else buffered deltas
+      uiLog.info('Audio transcript DONE: %o', evt?.transcript || evt?.response?.output_text || '');
+      const explicit = evt?.transcript || evt?.response?.output_text || '';
+      const finalText = (explicit && explicit.trim()) || assistantBuf.trim();
+      if (finalText) {
+        addMessage(finalText, 'elena');
+        memory.messages.push({ role: 'assistant', content: finalText });
+        saveMemory();
+        assistantBuf = '';
+      }
+      statusEl && (statusEl.textContent = 'Idle');
+      const track = firstAudioTrack(state.micStream);
+      if (track) track.enabled = true;
+      setBtnRecordingUI(true);
+      break;
+    }
+    case 'response.output_text.delta': {
+      const d = evt?.delta || '';
+      if (d) assistantBuf += d;
+      break;
+    }
+    case 'response.output_text.done': {
+      const finalText = (evt?.text || '').trim();
+      if (finalText) {
+        addMessage(finalText, 'elena');
+        memory.messages.push({ role: 'assistant', content: finalText });
+        saveMemory();
+        assistantBuf = '';
+      }
+      statusEl && (statusEl.textContent = 'Idle');
+      const track = firstAudioTrack(state.micStream);
+      if (track) track.enabled = true;
+      setBtnRecordingUI(true);
+      break;
+    }
+    case 'error': {
+      log.error('Realtime error: %o', evt);
+      statusEl && (statusEl.textContent = 'Error');
+      break;
+    }
+    default:
+      // Other events can be logged for debugging if needed
+      evtLog.trace('other %s', evt?.type);
+      break;
+  }
 }
 // --- End Realtime: WebRTC connection + event handling ---
 
 // Try again: reset all state and return to launcher UI
 async function tryAgainReset(): Promise<void> {
   // 1) Kill any residual audio/video aggressively (avatar/iframes/contexts)
-  try { await stopMediaAndVoice(); } catch {}
+  try { await stopMediaAndVoice(); } catch { }
 
   // 2) Clear chat/memory and disconnect realtime
-  try { resetSession(); } catch {}
+  try { resetSession(); } catch { }
 
   // 3) Return to the launcher (role‑play picker + Play bar)
   const page = document.getElementById('statsPage');
@@ -1040,30 +1076,31 @@ async function tryAgainReset(): Promise<void> {
   document.getElementById('annieControls')?.classList.remove('hidden');
   document.getElementById('avatarClose')?.classList.add('hidden');
   // Ensure Annie container is clean
-  try { document.getElementById('annieRoot')!.innerHTML = ''; } catch {}
+  try { document.getElementById('annieRoot')!.innerHTML = ''; } catch { }
 
   // Go back to the default tabed UI (realtime launcher)
-  try { showTab('realtime'); } catch {}
+  try { showTab('realtime'); } catch { }
 
   // Reset stats window start for the next run
   statsStartIndex = memory.messages.length;
+  currentRunId = undefined;
 }
 
 function resetSession() {
-    try { disconnectRealtime(); } catch { }
-    clearMemory();
-    clearChat();
-    renderHistory(memory);
-    setStatus('Idle');
-    setBtnRecordingUI(false);
-    showSessionUI(false);
+  try { disconnectRealtime(); } catch { }
+  clearMemory();
+  clearChat();
+  renderHistory(memory);
+  setStatus('Idle');
+  setBtnRecordingUI(false);
+  showSessionUI(false);
 }
 
 // Reset Session clears memory and UI
 const resetBtn = getEl('reset');
 if (resetBtn) {
-    resetBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        resetSession();
-    });
+  resetBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetSession();
+  });
 }
