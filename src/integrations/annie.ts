@@ -7,6 +7,10 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { addMessageWithMetadata, toChatMessageFromAnnie, type ChatRole } from '../state/memory';
+
+// Debug toggle can be flipped at runtime: window.__RIZMA_DEBUG_ANNIE__=true or localStorage.RIZMA_DEBUG_ANNIE='1'
+const isDebug = () => Boolean((window as any).__RIZMA_DEBUG_ANNIE__ || localStorage.getItem('RIZMA_DEBUG_ANNIE') === '1');
+
 // Allowed message kinds we push into memory
 type AnnieKind = 'user' | 'assistant' | 'system' | 'transcript';
 declare global {
@@ -66,16 +70,60 @@ function subscribe(target: any, name: string, handler: (...args: any[]) => void)
   return () => { };
 }
 
+function extractText(payload: any): string {
+  // Skip obvious non-finals
+  if (payload && (payload.final === false || payload.isFinal === false)) return '';
+
+  if (payload == null) return '';
+  if (typeof payload === 'string') return payload;
+  if (typeof payload?.text === 'string') return payload.text;
+  if (typeof payload?.message === 'string') return payload.message;
+  if (typeof payload?.content === 'string') return payload.content;
+
+  // OpenAI-like chat responses
+  if (payload?.choices && payload.choices[0]?.message?.content) return payload.choices[0].message.content;
+  if (payload?.choices && typeof payload.choices[0]?.text === 'string') return payload.choices[0].text;
+  if (Array.isArray(payload?.content)) {
+    // e.g. [{type:'output_text', text:'...'}]
+    const piece = payload.content.find((c: any) => typeof c?.text === 'string');
+    if (piece?.text) return piece.text;
+  }
+
+  // Arrays or message lists
+  if (Array.isArray(payload?.messages) && payload.messages.length) {
+    const last = payload.messages[payload.messages.length - 1];
+    return extractText(last);
+  }
+
+  // Avoid storing token deltas
+  if (typeof payload?.delta === 'string') return '';
+
+  try { return JSON.stringify(payload); } catch { return String(payload); }
+}
+
 function pushAnnie(kind: AnnieKind, payload: any, meta?: { runId: string; persona?: string }) {
   try {
+    if (isDebug()) console.debug('[annie:push]', kind, payload);
     const effMeta = meta || currentMeta || { runId: 'run_' + Date.now() };
-    const role: ChatRole = kind === 'user' ? 'user' : 'assistant'; // map 'assistant'|'system'|'transcript' -> 'assistant'
+    const role: ChatRole = (kind === 'user' || kind === 'transcript') ? 'user' : 'assistant';
+
+    // Try the stricter, structured converter first
     const m = toChatMessageFromAnnie(role, payload, effMeta);
-    if (m) {
-      // memory.addMessageWithMeta(role, content, { source, persona, runId })
+    if (m && m.content) {
       addMessageWithMetadata(
         m.role as any,
-        m.content ?? (typeof payload === 'string' ? payload : JSON.stringify(payload)),
+        m.content,
+        { source: 'avatar', persona: effMeta.persona, runId: effMeta.runId }
+      );
+      return;
+    }
+
+    // Fallback: best-effort text extraction from vendor payloads
+    const text = extractText(payload);
+    if (text && text.trim()) {
+      addMessageWithMetadata(
+        role as any,
+        text,
         { source: 'avatar', persona: effMeta.persona, runId: effMeta.runId }
       );
     }
@@ -92,23 +140,115 @@ function wireAnnieHistory(target: any, meta: { runId: string; persona?: string }
   const add = (evt: string, kind: AnnieKind) => {
     const off = subscribe(target, evt, (payload: any) => pushAnnie(kind, payload, meta));
     unsubs.push(off);
+    if (isDebug()) console.debug('[annie:subscribed]', evt);
   };
 
-  // Common vendor event names (best-effort)
-  ['assistant_message', 'assistant', 'reply', 'bot_message', 'message'].forEach(e => add(e, 'assistant'));
-  // Prefer "final" transcripts only
-  ['final_transcript', 'transcript_final', 'stt_final', 'transcription_final'].forEach(e => add(e, 'transcript'));
+  // Assistant / bot messages (cover both streaming containers and finals)
+  [
+    'assistant_message', 'assistant', 'reply', 'bot_message', 'message', 'agent_message',
+    'assistant.final', 'assistant_final', 'reply_final', 'finalMessage', 'final_message', 'llm_message'
+  ].forEach(e => add(e, 'assistant'));
 
-  // Generic "event" envelope some SDKs use
+  // Final user transcripts
+  [
+    'final_transcript', 'transcript_final', 'stt_final', 'transcription_final', 'user_transcript', 'userTranscript',
+    'speech.final', 'transcript.final', 'asr.final', 'user.final', 'asrFinal'
+  ].forEach(e => add(e, 'transcript'));
+
+  // Generic envelope some SDKs use
   const offGeneric = subscribe(target, 'event', (evt: any) => {
     const t = evt?.type || evt?.name;
     const payload = evt?.payload ?? evt;
     if (!t) return;
-    if (/(assistant|reply|bot)/i.test(t)) pushAnnie('assistant', payload, meta);
-    else if (/user/i.test(t)) pushAnnie('user', payload, meta);
-    else if (/(final|transcript)/i.test(t)) pushAnnie('transcript', payload, meta);
+    if (/(assistant|agent|reply|bot)/i.test(t)) pushAnnie('assistant', payload, meta);
+    else if (/(user|client)/i.test(t)) pushAnnie('user', payload, meta);
+    else if (/(final|transcript|asr)/i.test(t)) pushAnnie('transcript', payload, meta);
   });
   unsubs.push(offGeneric);
+
+  // Capture iframe -> window postMessage traffic (some SDKs surface events this way)
+  const offWinMsg = subscribe(window, 'message', (evt: any) => {
+    const data = evt?.data;
+    if (!data) return;
+    const t = data?.type || data?.event || data?.name;
+    const payload = data?.payload ?? data?.data ?? data;
+    if (isDebug()) console.debug('[annie:postMessage]', t, payload);
+
+    // Role detection heuristics
+    if (/(assistant|agent|reply|bot)/i.test(String(t)) || /^(assistant|agent)$/i.test(String(data?.role))) {
+      pushAnnie('assistant', payload, meta);
+      return;
+    }
+    if (/(user|client)/i.test(String(t)) || /^user$/i.test(String(data?.role))) {
+      pushAnnie('user', payload, meta);
+      return;
+    }
+    if (/(final|transcript|asr)/i.test(String(t)) || data?.final === true || data?.isFinal === true || data?.asrFinal === true) {
+      pushAnnie('transcript', payload, meta);
+      return;
+    }
+
+    // Fallback: if there is clear text, assume assistant (most vendors post assistant text)
+    const text = extractText(payload);
+    if (text) pushAnnie('assistant', payload, meta);
+  });
+  unsubs.push(offWinMsg);
+
+  // Last resort: intercept EventEmitter.emit to observe all events without vendor API knowledge
+  if (typeof target?.emit === 'function') {
+    const origEmit = target.emit.bind(target);
+    (target as any).emit = (name: string, payload: any) => {
+      try {
+        if (/(assistant|agent|reply|bot)/i.test(name)) pushAnnie('assistant', payload, meta);
+        else if (/(user|client)/i.test(name)) pushAnnie('user', payload, meta);
+        else if (/(final|transcript|asr)/i.test(name)) pushAnnie('transcript', payload, meta);
+      } catch { /* ignore */ }
+      return origEmit(name, payload);
+    };
+    unsubs.push(() => { try { (target as any).emit = origEmit; } catch { /* ignore */ } });
+  }
+}
+
+function wrapOnPropertyHandlers<T extends object>(obj: T, meta: { runId: string; persona?: string }): T {
+  const guessKind = (name: string): AnnieKind => {
+    if (/assistant|agent|bot|reply/i.test(name)) return 'assistant';
+    if (/user|client/i.test(name)) return 'user';
+    if (/final|transcript|asr/i.test(name)) return 'transcript';
+    return 'assistant';
+  };
+
+  const proxy = new Proxy(obj as any, {
+    set(target, prop: any, value: any) {
+      const name = String(prop);
+      if (/^on[A-Z]/.test(name) && typeof value === 'function') {
+        const kind = guessKind(name);
+        const wrapped = function(this: any, ...args: any[]) {
+          try { pushAnnie(kind, args[0] ?? args, meta); } catch { /* ignore */ }
+          return value.apply(this, args);
+        };
+        if (isDebug()) console.debug('[annie:on* wrapped]', name, kind);
+        target[name] = wrapped;
+        return true;
+      }
+      target[name] = value;
+      return true;
+    }
+  });
+
+  // Also wrap already-present `on*` function-typed properties (callbacks assigned earlier)
+  Object.keys(obj as any).forEach((k) => {
+    const v: any = (obj as any)[k];
+    if (/^on[A-Z]/.test(k) && typeof v === 'function') {
+      const kind = guessKind(k);
+      (obj as any)[k] = function(this: any, ...args: any[]) {
+        try { pushAnnie(kind, args[0] ?? args, meta); } catch { /* ignore */ }
+        return v.apply(this, args);
+      };
+      if (isDebug()) console.debug('[annie:on* patched]', k, kind);
+    }
+  });
+
+  return proxy as T;
 }
 
 /** Connect and render the avatar into the provided root element. */
@@ -127,6 +267,11 @@ export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
 
   // ctor: (token, animatoId, userId, username)
   avatar = new Ctor(opts.token, opts.animatoId, opts.userId, opts.username ?? 'rizma');
+  if (isDebug()) {
+    try { console.debug('[annie:keys]', Object.keys(avatar || {})); } catch {}
+  }
+  // Wrap on* handler properties so we can observe callbacks-based SDKs
+  avatar = wrapOnPropertyHandlers(avatar, meta);
 
   const origUser = avatar?.sendUserMessage?.bind(avatar);
   avatar.sendUserMessage = (text: string) => {

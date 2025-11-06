@@ -541,6 +541,11 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
+    prompt: `Scenario: Job interview. Random position, random company.`, 
+    kickoff: `Hi Michal...`
+  },
+  /*
+  interview: {
     prompt: `Scenario: You a leading a
     role-play game where the user is being interviewed for a new role as a tech lead. Call me Michal, 
     not rizma. Rizma is the company, not my name. Goals: Welcome them, and start inteviewing for the role. 
@@ -564,7 +569,7 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
     my king."`,
     kickoff: `Hi Michal, welcome! I'm Elena, the VP of engineering. Could you start by telling us a bit about 
     your background?`
-  },
+  },*/
   feedback: {
     prompt: `You are Elena, a calm manager. Scenario: the user practices delivering difficult feedback to 
     a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, 
