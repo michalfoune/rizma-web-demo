@@ -534,15 +534,17 @@ function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
 const SYSTEM_PROMPT = "You are Elena, an empathetic supportive assistant to guide role-plays for employees. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
 
-const MEMORY_KEY = "rizma_memory_v1";
+const MEMORY_KEY = "rizma_memory_v2";
 
 const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12 messages)
 
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
-    prompt: `Scenario: Job interview. Random position, random company.`, 
-    kickoff: `Hi Michal...`
+    prompt: `Michal will ask you what you can do. Answer that you can help with interview prep through 
+    realistic role-play scenarios that can be tweaked for a particular role and company. You can provide 
+    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc.`, 
+    kickoff: `Hi Michal, what do you need help with today?`
   },
   /*
   interview: {

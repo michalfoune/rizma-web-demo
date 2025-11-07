@@ -238,9 +238,17 @@
       const scenarioTitleEl = document.getElementById('scenarioTitle');
       function setScenarioTitleFromSelection() {
         try {
-          const sel = document.querySelector('#scenarios .scenario.is-selected .label');
-          if (sel && scenarioTitleEl) scenarioTitleEl.textContent = sel.textContent || '';
-        } catch { }
+          const btn = document.querySelector('#scenarios .scenario.is-selected');
+          if (!btn || !scenarioTitleEl) return;
+          const label = (btn.querySelector('.label')?.textContent || '').trim();
+          const scenario = btn.getAttribute('data-scenario');
+          if (scenario === 'introductions') {
+            // Add briefcase icon for Job Interview (icon after label)
+            scenarioTitleEl.innerHTML = label + ' <span class="icon-briefcase" aria-hidden="true">💼</span>';
+          } else {
+            scenarioTitleEl.textContent = label;
+          }
+        } catch {}
       }
       function showScenarioTitle(show) {
         if (!scenarioTitleEl) return;
