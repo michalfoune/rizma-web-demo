@@ -104,32 +104,73 @@ function extractText(payload: any): string {
 function pushAnnie(kind: AnnieKind, payload: any, meta?: { runId: string; persona?: string }) {
   try {
     if (isDebug()) console.debug('[annie:push]', kind, payload);
-    const effMeta = meta || currentMeta || { runId: 'run_' + Date.now() };
-    const role: ChatRole = (kind === 'user' || kind === 'transcript') ? 'user' : 'assistant';
+
+    // Normalize vendor data-received envelopes
+    let effKind: AnnieKind = kind;
+    let overrideText: string | undefined;
+    try {
+      const d: any = (payload && (payload.data ?? payload.payload)) || null;
+      if (d && typeof d === 'object') {
+        // Drop non-final streaming chunks if signaled
+        if (typeof d.final === 'boolean' && d.final === false) return;
+
+        // Primary text messages
+        if (d.type === 'on_text') {
+          const who = String(d.who || '').toLowerCase();
+          effKind = (who === 'user' || who === 'client') ? 'user' : 'assistant';
+          if (typeof d.text === 'string') overrideText = d.text;
+        }
+
+        // Tool/function calls (do not spam memory with args unless desired)
+        if (d.type === 'function_call') {
+          effKind = 'assistant';
+          const callName = d.name || d.tool || d.function || 'function_call';
+          // Keep it compact; arguments may be huge
+          overrideText = `🔧 ${String(callName)}(…)`;
+        }
+      }
+    } catch { /* ignore */ }
+
+    const role: ChatRole = (effKind === 'user' || effKind === 'transcript') ? 'user' : 'assistant';
 
     // Try the stricter, structured converter first
-    const m = toChatMessageFromAnnie(role, payload, effMeta);
+    const m = toChatMessageFromAnnie(role, payload, effKind ? meta : currentMeta || { runId: 'run_' + Date.now() });
     if (m && m.content) {
       addMessageWithMetadata(
         m.role as any,
         m.content,
-        { source: 'avatar', persona: effMeta.persona, runId: effMeta.runId }
+        { source: 'avatar', persona: meta?.persona || currentMeta?.persona, runId: meta?.runId || currentMeta?.runId }
       );
       return;
     }
 
     // Fallback: best-effort text extraction from vendor payloads
-    const text = extractText(payload);
+    const text = overrideText ?? ((payload?.data && typeof payload.data.text === 'string') ? payload.data.text : extractText(payload));
     if (text && text.trim()) {
       addMessageWithMetadata(
         role as any,
         text,
-        { source: 'avatar', persona: effMeta.persona, runId: effMeta.runId }
+        { source: 'avatar', persona: meta?.persona || currentMeta?.persona, runId: meta?.runId || currentMeta?.runId }
       );
     }
   } catch (e) {
     console.debug('history push failed:', e, kind, payload);
   }
+}
+
+// --- Deep wiring helper and seen-set ---
+const __wiredSeen = new WeakSet<object>();
+function wireAnnieDeep(target: any, meta: { runId: string; persona?: string }) {
+  if (!target || typeof target !== 'object') return;
+  if (__wiredSeen.has(target)) return;
+  __wiredSeen.add(target);
+  try { wireAnnieHistory(target, meta); } catch { }
+  // Common nested containers that actually emit the data events
+  const kids = [
+    target.room, target._room, target.client, target.lk?.room, target.livekit?.room,
+    target.connection, target.signalClient, target.signaling, target.transport
+  ].filter(Boolean);
+  for (const k of kids) wireAnnieDeep(k, meta);
 }
 
 function wireAnnieHistory(target: any, meta: { runId: string; persona?: string }) {
@@ -140,7 +181,7 @@ function wireAnnieHistory(target: any, meta: { runId: string; persona?: string }
   const add = (evt: string, kind: AnnieKind) => {
     const off = subscribe(target, evt, (payload: any) => pushAnnie(kind, payload, meta));
     unsubs.push(off);
-    if (isDebug()) console.debug('[annie:subscribed]', evt);
+    if (isDebug()) console.debug('[annie:subscribed]', evt, 'on', (target && (target.constructor?.name || typeof target)));
   };
 
   // Assistant / bot messages (cover both streaming containers and finals)
@@ -155,10 +196,18 @@ function wireAnnieHistory(target: any, meta: { runId: string; persona?: string }
     'speech.final', 'transcript.final', 'asr.final', 'user.final', 'asrFinal'
   ].forEach(e => add(e, 'transcript'));
 
+  // Vendor-specific stream for role-play text
+  add('data-received', 'assistant'); // role will be corrected inside pushAnnie via payload.data.who
+  add('dataReceived', 'assistant');
+  add('trackMessageReceived', 'assistant');
+
   // Generic envelope some SDKs use
   const offGeneric = subscribe(target, 'event', (evt: any) => {
     const t = evt?.type || evt?.name;
     const payload = evt?.payload ?? evt;
+    if (isDebug() && (payload?.data?.type)) {
+      console.debug('[annie:data-type]', payload.data.type, payload.data);
+    }
     if (!t) return;
     if (/(assistant|agent|reply|bot)/i.test(t)) pushAnnie('assistant', payload, meta);
     else if (/(user|client)/i.test(t)) pushAnnie('user', payload, meta);
@@ -173,6 +222,9 @@ function wireAnnieHistory(target: any, meta: { runId: string; persona?: string }
     const t = data?.type || data?.event || data?.name;
     const payload = data?.payload ?? data?.data ?? data;
     if (isDebug()) console.debug('[annie:postMessage]', t, payload);
+    if (isDebug() && (payload?.data?.type || data?.data?.type)) {
+      console.debug('[annie:data-type]', payload?.data?.type || data?.data?.type, payload?.data || data?.data);
+    }
 
     // Role detection heuristics
     if (/(assistant|agent|reply|bot)/i.test(String(t)) || /^(assistant|agent)$/i.test(String(data?.role))) {
@@ -222,7 +274,7 @@ function wrapOnPropertyHandlers<T extends object>(obj: T, meta: { runId: string;
       const name = String(prop);
       if (/^on[A-Z]/.test(name) && typeof value === 'function') {
         const kind = guessKind(name);
-        const wrapped = function(this: any, ...args: any[]) {
+        const wrapped = function (this: any, ...args: any[]) {
           try { pushAnnie(kind, args[0] ?? args, meta); } catch { /* ignore */ }
           return value.apply(this, args);
         };
@@ -240,7 +292,7 @@ function wrapOnPropertyHandlers<T extends object>(obj: T, meta: { runId: string;
     const v: any = (obj as any)[k];
     if (/^on[A-Z]/.test(k) && typeof v === 'function') {
       const kind = guessKind(k);
-      (obj as any)[k] = function(this: any, ...args: any[]) {
+      (obj as any)[k] = function (this: any, ...args: any[]) {
         try { pushAnnie(kind, args[0] ?? args, meta); } catch { /* ignore */ }
         return v.apply(this, args);
       };
@@ -267,11 +319,25 @@ export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
 
   // ctor: (token, animatoId, userId, username)
   avatar = new Ctor(opts.token, opts.animatoId, opts.userId, opts.username ?? 'rizma');
+  (window as any).__annie = avatar;
   if (isDebug()) {
-    try { console.debug('[annie:keys]', Object.keys(avatar || {})); } catch {}
+    try { console.debug('[annie:keys]', Object.keys(avatar || {})); } catch { }
   }
   // Wrap on* handler properties so we can observe callbacks-based SDKs
   avatar = wrapOnPropertyHandlers(avatar, meta);
+
+  // Direct vendor-recommended hook: animato.on('data-received', ...)
+  const handleDataReceived = (dap: any) => {
+    if (isDebug()) console.debug('[annie:direct:data-received]', dap?.data?.type, dap);
+    // Normalize and persist via our common path
+    pushAnnie('assistant', dap, meta);
+  };
+  if (typeof (avatar as any)?.on === 'function') {
+    try {
+      (avatar as any).on('data-received', handleDataReceived);
+      unsubs.push(() => { try { (avatar as any).off?.('data-received', handleDataReceived); } catch { } });
+    } catch { }
+  }
 
   const origUser = avatar?.sendUserMessage?.bind(avatar);
   avatar.sendUserMessage = (text: string) => {
@@ -299,7 +365,11 @@ export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
   if (typeof opts.mic === 'boolean') setAnnieMic(opts.mic);
 
   if (opts.trackHistory !== false) {
-    wireAnnieHistory(avatar, meta);
+    // Wire root and any nested LiveKit/connection objects that emit data events
+    wireAnnieDeep(avatar, meta);
+    // Re-scan shortly after connect to catch late-created rooms
+    setTimeout(() => { try { wireAnnieDeep(avatar, meta); } catch { } }, 500);
+    setTimeout(() => { try { wireAnnieDeep(avatar, meta); } catch { } }, 1500);
   }
 
   // One self-cam attach, after user gesture
@@ -315,6 +385,7 @@ export function disconnectAnnie(): void {
   unsubs = [];
   currentMeta = null;
   try { avatar?.disconnect?.(); } catch { /* ignore */ }
+  try { (window as any).__annie = null; } catch { }
   avatar = null;
   stopSelfCam();
 }

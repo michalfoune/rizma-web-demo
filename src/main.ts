@@ -37,10 +37,11 @@ function initKillSwitch(): void {
   g.__killSwitchInstalled = true;
 
   // Track RTCPeerConnections (vendor SDK may open its own)
+  // Track RTCPeerConnections (vendor SDK may open its own)
   const OrigPC = g.RTCPeerConnection;
   if (typeof OrigPC === 'function') {
     const WrappedPC = function (...args: any[]) {
-      const pc = new OrigPC(...args);
+      const pc: RTCPeerConnection = new OrigPC(...args);
       try {
         KILL.pcs.add(pc);
         pc.addEventListener('connectionstatechange', () => {
@@ -49,8 +50,9 @@ function initKillSwitch(): void {
           }
         });
       } catch { }
-      return pc;
+      return pc as any;
     } as any;
+
     WrappedPC.prototype = OrigPC.prototype;
     g.RTCPeerConnection = WrappedPC;
   }
@@ -108,23 +110,23 @@ function initKillSwitch(): void {
 async function hardStopAllTrackedMedia(): Promise<void> {
   // Pause & detach any tracked media elements
   for (const el of Array.from(KILL.mediaEls)) {
-    try { el.muted = true; } catch {}
-    try { el.pause?.(); } catch {}
+    try { el.muted = true; } catch { }
+    try { el.pause?.(); } catch { }
     try {
       const ms = (el as any).srcObject as MediaStream | null;
       if (ms) {
-        try { ms.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+        try { ms.getTracks().forEach(t => { try { t.stop(); } catch { } }); } catch { }
       }
-    } catch {}
-    try { (el as any).srcObject = null; } catch {}
-    try { el.removeAttribute('src'); } catch {}
-    try { el.load?.(); } catch {}
+    } catch { }
+    try { (el as any).srcObject = null; } catch { }
+    try { el.removeAttribute('src'); } catch { }
+    try { el.load?.(); } catch { }
   }
   KILL.mediaEls.clear();
 
   // Stop all captured MediaStreams
   for (const s of Array.from(KILL.streams)) {
-    try { s.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+    try { s.getTracks?.().forEach(t => { try { t.stop(); } catch { } }); } catch { }
   }
   KILL.streams.clear();
 
@@ -134,21 +136,21 @@ async function hardStopAllTrackedMedia(): Promise<void> {
       // Prefer close(); only suspend if close() is not available.
       if (typeof ctx.close === 'function') {
         if (ctx.state !== 'closed') {
-          await Promise.resolve(ctx.close()).catch(() => {});
+          await Promise.resolve(ctx.close()).catch(() => { });
         }
       } else if (typeof ctx.suspend === 'function') {
         if (ctx.state === 'running') {
-          await Promise.resolve(ctx.suspend()).catch(() => {});
+          await Promise.resolve(ctx.suspend()).catch(() => { });
         }
       }
-    } catch {}
+    } catch { }
   }
   KILL.audioCtxs.clear();
 
   // Close all captured RTCPeerConnections
   for (const pc of Array.from(KILL.pcs)) {
-    try { pc.getSenders?.().forEach((s: any) => { try { s.track?.stop?.(); } catch {} }); } catch {}
-    try { if (pc.connectionState !== 'closed') pc.close?.(); } catch {}
+    try { pc.getSenders?.().forEach((s: any) => { try { s.track?.stop?.(); } catch { } }); } catch { }
+    try { if (pc.connectionState !== 'closed') pc.close?.(); } catch { }
   }
   KILL.pcs.clear();
 }
@@ -316,6 +318,37 @@ function showStatsPage(stats: EvalStats, title: string) {
   }, { once: true });
 }
 
+// Bridge CallAnnie "data-received" payloads directly from the SDK instance we just created (no globals)
+function attachAnnieDirect(animato: any): void {
+  const onData = (dap: any) => {
+    console.log("onData called")
+    const d = (dap && dap.data) ? dap.data : dap;
+    if (!d || typeof d !== 'object') return;
+
+    if (d.type === 'function_call') {
+      const name = d.name || d.tool || d.function || 'function_call';
+      memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
+      console.log(`ROLE: assistant, MESSAGE: ${String(name)}(…)`);
+      saveMemory();
+      return;
+    }
+
+    if (d.type === 'on_text' && typeof d.text === 'string') {
+      const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
+      const text = d.text.trim();
+      if (!text) return;
+      memory.messages.push({ role: who as ChatRole, content: text });
+      console.log(`WHO: ${who}, MESSAGE: ${text}`);
+      saveMemory();
+      return;
+    }
+  };
+
+  // As per SDK author: for vanilla JS
+  //   animato.onDataReceived = your callback
+  (animato as any).onDataReceived = onData;
+}
+
 let tearingDown = false;
 
 // === Media/Audio/SDK helpers (extracted for deduplication) ===
@@ -341,13 +374,13 @@ async function flushBufferedAudio(el: HTMLMediaElement): Promise<void> {
     // Give the browser a moment to commit the swap
     await new Promise(r => setTimeout(r, 120));
     // Blank back out
-    try { el.pause(); } catch {}
-    try { (el as any).srcObject = null; } catch {}
-    try { el.removeAttribute('src'); } catch {}
-    try { el.load?.(); } catch {}
+    try { el.pause(); } catch { }
+    try { (el as any).srcObject = null; } catch { }
+    try { el.removeAttribute('src'); } catch { }
+    try { el.load?.(); } catch { }
     // Tear down the context
-    try { osc.stop(); } catch {}
-    try { await ctx.close(); } catch {}
+    try { osc.stop(); } catch { }
+    try { await ctx.close(); } catch { }
   } catch {
     /* ignore */
   }
@@ -357,30 +390,30 @@ function stopMediaIn(root: HTMLElement | null): void {
   if (!root) return;
   const media = root.querySelectorAll('video, audio');
   media.forEach((el) => {
-    try { (el as HTMLMediaElement).muted = true; } catch {}
-    try { (el as HTMLMediaElement).volume = 0; } catch {}
-    try { (el as HTMLMediaElement).pause?.(); } catch {}
+    try { (el as HTMLMediaElement).muted = true; } catch { }
+    try { (el as HTMLMediaElement).volume = 0; } catch { }
+    try { (el as HTMLMediaElement).pause?.(); } catch { }
     // Stop/detach any live MediaStream
     try {
       const ms = (el as any).srcObject as MediaStream | null;
-      if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch {} });
-    } catch {}
-    try { (el as any).srcObject = null; } catch {}
-    try { (el as HTMLMediaElement).removeAttribute('src'); } catch {}
-    try { (el as HTMLMediaElement).currentTime = 0; } catch {}
-    try { (el as HTMLMediaElement).load?.(); } catch {}
+      if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch { } });
+    } catch { }
+    try { (el as any).srcObject = null; } catch { }
+    try { (el as HTMLMediaElement).removeAttribute('src'); } catch { }
+    try { (el as HTMLMediaElement).currentTime = 0; } catch { }
+    try { (el as HTMLMediaElement).load?.(); } catch { }
     // Best-effort: flush any buffered tail audio
-    try { void flushBufferedAudio(el as HTMLMediaElement); } catch {}
+    try { void flushBufferedAudio(el as HTMLMediaElement); } catch { }
   });
 
   // Remove any SDK iframes under this root (kills cross‑origin audio nodes)
   try {
     const iframes = root.querySelectorAll('iframe');
     iframes.forEach((f) => {
-      try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
-      try { f.remove(); } catch {}
+      try { (f as HTMLIFrameElement).src = 'about:blank'; } catch { }
+      try { f.remove(); } catch { }
     });
-  } catch {}
+  } catch { }
 }
 
 /** Close/suspend any AudioContexts we can discover on window (defensive). */
@@ -402,21 +435,21 @@ async function closePossibleAudioContexts(): Promise<void> {
           maybeCtxs.push(v);
         }
       }
-    } catch {}
+    } catch { }
     for (const ac of maybeCtxs) {
       try {
         if (typeof ac.close === 'function') {
           if (ac.state !== 'closed') {
-            await Promise.resolve(ac.close()).catch(() => {});
+            await Promise.resolve(ac.close()).catch(() => { });
           }
         } else if (typeof ac.suspend === 'function') {
           if (ac.state === 'running') {
-            await Promise.resolve(ac.suspend()).catch(() => {});
+            await Promise.resolve(ac.suspend()).catch(() => { });
           }
         }
-      } catch {}
+      } catch { }
     }
-  } catch {}
+  } catch { }
 }
 
 /** Remove obvious vendor iframes globally. */
@@ -427,12 +460,12 @@ function nukeVendorIframes(): void {
       try {
         const src = (f as HTMLIFrameElement).src || '';
         if (/callannie|animato/i.test(src) || (f.id && /annie|avatar/i.test(f.id))) {
-          try { (f as HTMLIFrameElement).src = 'about:blank'; } catch {}
-          try { f.remove(); } catch {}
+          try { (f as HTMLIFrameElement).src = 'about:blank'; } catch { }
+          try { f.remove(); } catch { }
         }
-      } catch {}
+      } catch { }
     });
-  } catch {}
+  } catch { }
 }
 // Cleanly stop any media and mic, and hide the Play row
 async function stopMediaAndVoice(): Promise<void> {
@@ -440,12 +473,12 @@ async function stopMediaAndVoice(): Promise<void> {
   tearingDown = true;
   try {
     // 1) Politely tell SDKs to stop first, then wait
-    try { setAnnieMic(false); } catch {}
-    try { await Promise.resolve(disconnectAnnie() as any); } catch {}
-    try { disconnectRealtime(); } catch {}
+    try { setAnnieMic(false); } catch { }
+    try { await Promise.resolve(disconnectAnnie() as any); } catch { }
+    try { disconnectRealtime(); } catch { }
 
     // Cancel any Web Speech TTS immediately
-    try { window.speechSynthesis?.cancel?.(); } catch {}
+    try { window.speechSynthesis?.cancel?.(); } catch { }
 
     // 2) Stop/clear any audio/video elements under our known roots
     stopMediaIn(document.getElementById('avatarPanel'));
@@ -455,19 +488,19 @@ async function stopMediaAndVoice(): Promise<void> {
     // Remote/fallback sinks
     const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
     if (ra) {
-      try { ra.pause(); } catch {}
+      try { ra.pause(); } catch { }
       ra.muted = true; ra.currentTime = 0;
-      try { (ra as any).srcObject = null; } catch {}
+      try { (ra as any).srcObject = null; } catch { }
     }
     const fa = document.getElementById('fallbackAudio') as HTMLAudioElement | null;
-    if (fa) { try { fa.pause(); } catch {}; fa.currentTime = 0; }
+    if (fa) { try { fa.pause(); } catch { }; fa.currentTime = 0; }
 
     // Self cam (if any)
     const selfCamEl = document.getElementById('selfCam') as HTMLVideoElement | null;
     const ms = (selfCamEl?.srcObject as MediaStream) || null;
     if (ms) {
-      try { ms.getTracks().forEach(t => t.stop()); } catch {}
-      try { if (selfCamEl) selfCamEl.srcObject = null; } catch {}
+      try { ms.getTracks().forEach(t => t.stop()); } catch { }
+      try { if (selfCamEl) selfCamEl.srcObject = null; } catch { }
     }
 
     // 3) Now nuke surfaces that might recreate audio after disconnect
@@ -475,14 +508,14 @@ async function stopMediaAndVoice(): Promise<void> {
     await closePossibleAudioContexts();
 
     // 4) Safety pass: stop anything we proactively tracked (PCs, streams, contexts)
-    try { await hardStopAllTrackedMedia(); } catch {}
+    try { await hardStopAllTrackedMedia(); } catch { }
 
     // 5) Hide the play row/button
     document.getElementById('composer')?.classList.add('hidden');
     document.getElementById('micFab')?.classList.add('hidden');
 
     // Give the browser a tick to flush halted audio pipelines
-    try { await new Promise(r => setTimeout(r, 60)); } catch {}
+    try { await new Promise(r => setTimeout(r, 60)); } catch { }
   } finally {
     // Release the re‑entrancy lock and clear trackers
     tearingDown = false;
@@ -491,7 +524,7 @@ async function stopMediaAndVoice(): Promise<void> {
       KILL.streams.clear();
       KILL.audioCtxs.clear();
       KILL.pcs.clear();
-    } catch {}
+    } catch { }
   }
 }
 
@@ -543,7 +576,7 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
     prompt: `Michal will ask you what you can do. Answer that you can help with interview prep through 
     realistic role-play scenarios that can be tweaked for a particular role and company. You can provide 
-    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc.`, 
+    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc.`,
     kickoff: `Hi Michal, what do you need help with today?`
   },
   /*
@@ -636,12 +669,8 @@ bindControls({
       // Switch UI to Avatar tab
       showTab('avatar');
 
-      // Manual Token Fetch
-      // const token = Animato_Test_Token;
-
-      // Auto-connect the avatar using constants from config
-      // const userId = Animato_UserID;
-      const userId = "test_user"
+      // Connect the avatar using constants from config (sole connection path)
+      const userId = Animato_UserID;
       const animatoId = Animato_ID;
       const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
       const root = document.getElementById('annieRoot') as HTMLElement | null;
@@ -664,7 +693,9 @@ bindControls({
         setDefaultRunId(runId);
         statsStartIndex = memory.messages.length;
 
-        await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
+        const animato = await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
+        console.log('Annie connected:', animato);
+        attachAnnieDirect(animato);
 
         // Hide manual controls and show close (X)
         document.getElementById('annieControls')?.classList.add('hidden');
@@ -788,37 +819,7 @@ onDomReady(() => {
     showTab('avatar');
   });
 
-  // Avatar buttons
-  document.getElementById('annieConnect')?.addEventListener('click', async () => {
-    const userId = Animato_UserID; // fixed for now; could be made user-editable
-    const animatoId = Animato_ID; // fixed for now; could be made user-editable
-    const mic = (document.getElementById('annieMic') as HTMLInputElement)?.checked ?? true;
-    const root = document.getElementById('annieRoot') as HTMLElement | null;
-    const token = await getAnnieToken(userId, animatoId);
-    if (!token || !root) { console.warn('Avatar: missing token or root'); return; }
-    try {
-      const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      currentRunId = runId;
-      setDefaultRunId(runId);
-      statsStartIndex = memory.messages.length;
-
-      await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
-      // Hide controls only after a successful connection
-      document.getElementById('annieControls')?.classList.add('hidden');
-      document.getElementById('avatarClose')?.classList.remove('hidden');
-    } catch (e) { console.warn('Avatar connect failed', e); }
-  });
-
-  document.getElementById('annieDisconnect')?.addEventListener('click', () => {
-    try { disconnectAnnie(); } catch { }
-    document.getElementById('annieControls')?.classList.remove('hidden');
-    document.getElementById('avatarClose')?.classList.add('hidden');
-  });
-
-  document.getElementById('annieSend')?.addEventListener('click', () => {
-    const msg = (document.getElementById('annieMessage') as HTMLInputElement)?.value ?? '';
-    if (msg.trim()) sendAnnieUserMessage(msg.trim());
-  });
+  // (Manual Avatar connect/disconnect/send buttons removed; sole connection path is auto-connect.)
 });
 
 // --- Response triggering over DataChannel ---
