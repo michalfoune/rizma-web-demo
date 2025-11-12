@@ -320,9 +320,9 @@ function showStatsPage(stats: EvalStats, title: string) {
 
 // Bridge CallAnnie "data-received" payloads directly from the SDK instance we just created (no globals)
 function attachAnnieDirect(animato: any): void {
-  const onData = (dap: any) => {
+  const onData = (payload: any) => {
     console.log("onData called")
-    const d = (dap && dap.data) ? dap.data : dap;
+    const d = (payload && payload.data) ? payload.data : payload;
     if (!d || typeof d !== 'object') return;
 
     if (d.type === 'function_call') {
@@ -344,8 +344,7 @@ function attachAnnieDirect(animato: any): void {
     }
   };
 
-  // As per SDK author: for vanilla JS
-  //   animato.onDataReceived = your callback
+  // As per SDK author for vanilla JS
   (animato as any).onDataReceived = onData;
 }
 
