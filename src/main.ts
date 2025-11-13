@@ -319,33 +319,72 @@ function showStatsPage(stats: EvalStats, title: string) {
 }
 
 // Bridge CallAnnie "data-received" payloads directly from the SDK instance we just created (no globals)
-function attachAnnieDirect(animato: any): void {
-  const onData = (payload: any) => {
-    console.log("onData called")
-    const d = (payload && payload.data) ? payload.data : payload;
-    if (!d || typeof d !== 'object') return;
+function attachAnnieDirect(inst: any): void {
+  if (!inst) return;
 
-    if (d.type === 'function_call') {
-      const name = d.name || d.tool || d.function || 'function_call';
-      memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
-      console.log(`ROLE: assistant, MESSAGE: ${String(name)}(…)`);
-      saveMemory();
-      return;
-    }
+  // Prefer the event-emitter API if present.
+  if (typeof inst.on === 'function') {
+    const handler = (payload: any) => {
+      try {
+        const d = (payload && payload.data) ? payload.data : payload;
+        if (!d || typeof d !== 'object') return;
 
-    if (d.type === 'on_text' && typeof d.text === 'string') {
-      const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
-      const text = d.text.trim();
-      if (!text) return;
-      memory.messages.push({ role: who as ChatRole, content: text });
-      console.log(`WHO: ${who}, MESSAGE: ${text}`);
-      saveMemory();
-      return;
-    }
-  };
+        if (d.type === 'function_call') {
+          const name = d.name || d.tool || d.function || 'function_call';
+          memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
+          saveMemory();
+          return;
+        }
 
-  // As per SDK author for vanilla JS
-  (animato as any).onDataReceived = onData;
+        if (d.type === 'on_text' && typeof d.text === 'string') {
+          const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
+          const text = d.text.trim();
+          if (!text) return;
+          memory.messages.push({ role: who as ChatRole, content: text });
+          saveMemory();
+          return;
+        }
+      } catch { /* noop */ }
+    };
+
+    try { inst.on('data-received', handler); } catch { /* noop */ }
+    return;
+  }
+
+  // Vanilla surface fallback: attach only if the slot exists and is writable.
+  const proto = Object.getPrototypeOf(inst) || {};
+  const desc =
+    Object.getOwnPropertyDescriptor(inst, 'onDataReceived') ||
+    Object.getOwnPropertyDescriptor(proto, 'onDataReceived');
+
+  if (desc && (desc.writable || desc.set)) {
+    try {
+      (inst as any).onDataReceived = (payload: any) => {
+        try {
+          const d = (payload && payload.data) ? payload.data : payload;
+          if (!d || typeof d !== 'object') return;
+
+          if (d.type === 'function_call') {
+            const name = d.name || d.tool || d.function || 'function_call';
+            memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
+            saveMemory();
+            return;
+          }
+
+          if (d.type === 'on_text' && typeof d.text === 'string') {
+            const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
+            const text = d.text.trim();
+            if (!text) return;
+            memory.messages.push({ role: who as ChatRole, content: text });
+            saveMemory();
+            return;
+          }
+        } catch { /* noop */ }
+      };
+    } catch { /* noop */ }
+  } else {
+    console.warn('[annie-direct] invalid animato instance (no emitter / non-writable onDataReceived)');
+  }
 }
 
 let tearingDown = false;
@@ -695,6 +734,14 @@ bindControls({
         const animato = await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
         console.log('Annie connected:', animato);
         attachAnnieDirect(animato);
+        (window as any).__annie = animato;  // expose for console
+        const hasOn = typeof (animato as any).on === 'function';
+        const hasOnDataReceived = 'onDataReceived' in (animato as any);
+        console.log('[annie] surface', { hasOn, hasOnDataReceived });
+
+        if (hasOn) {
+          try { (animato as any).on('data-received', (p: any) => console.log('[on data-received]', p)); } catch {}
+        }
 
         // Hide manual controls and show close (X)
         document.getElementById('annieControls')?.classList.add('hidden');

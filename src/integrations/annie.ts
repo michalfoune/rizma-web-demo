@@ -1,8 +1,12 @@
 /* 
-   Lightweight wrapper around the CallAnnie avatar UMD API.
+   Lightweight wrapper around the CallAnnie **Animato** SDK.
 
-   Required: place vendor bundle at /public/api.umd.js
-   (The bundle must expose window.CallAnnieAPI_V0_R1)
+   Preferred: load the official SDK in index.html:
+     <script src="https://app.callannie.ai/animato-sdk.js" crossorigin="anonymous"></script>
+
+   This module detects the available surface at runtime:
+   - New SDK: window.Animato or window.animato (instance exposes `onDataReceived`)
+   - Legacy UMD: window.CallAnnieAPI_V0_R1 (event emitter: `.on('data-received', ...)`)
 */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -16,6 +20,9 @@ type AnnieKind = 'user' | 'assistant' | 'system' | 'transcript';
 declare global {
   interface Window {
     CallAnnieAPI_V0_R1?: any;
+    Animato?: any;
+    animato?: any;
+    __animatoPromise?: Promise<any>;
   }
 }
 
@@ -36,24 +43,72 @@ export type AnnieConnectOpts = {
   trackHistory?: boolean; // default true
 };
 
-/** Lazy-load the UMD bundle and return the constructor. */
-let loadPromise: Promise<any> | null = null;
+function sleep(ms: number) { return new Promise(res => setTimeout(res, ms)); }
 
-export async function loadAnnie() {
-  const w = window as any;
-  if (w.CallAnnieAPI_V0_R1) return w.CallAnnieAPI_V0_R1;
-
-  if (!loadPromise) {
-    loadPromise = new Promise<void>((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = '/api.umd.js';
-      s.async = true;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('Failed to load /api.umd.js'));
-      document.head.appendChild(s);
-    }).then(() => (window as any).CallAnnieAPI_V0_R1);
+async function ensureAnimatoTag(): Promise<void> {
+  const existing = document.querySelector('script[src*="app.callannie.ai/animato-sdk.js"]') as HTMLScriptElement | null;
+  if (existing) {
+    if (isDebug()) console.debug('[annie] animato-sdk.js tag already present; waiting for load…');
+    // If it already finished loading, return immediately.
+    const done = (existing as any)._loaded || (existing as any).complete;
+    if (done) return;
+    await new Promise<void>((resolve, reject) => {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('animato-sdk.js failed to load')), { once: true });
+    });
+    return;
   }
-  return loadPromise;
+  await new Promise<void>((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://app.callannie.ai/animato-sdk.js';
+    s.crossOrigin = 'anonymous';
+    s.async = true;
+    (s as any)._loaded = false;
+    s.onload = () => { (s as any)._loaded = true; if (isDebug()) console.debug('[annie] animato-sdk.js injected'); resolve(); };
+    s.onerror = () => reject(new Error('animato-sdk.js failed to load'));
+    document.head.prepend(s);
+  });
+}
+
+export async function loadAnnie(timeoutMs = 10000, intervalMs = 50): Promise<any> {
+  const pick = () =>
+    (window as any).animato ||
+    (window as any).Animato || // ESM module attached to window by index.html
+    (window as any).CallAnnieAPI_V0_R1 ||
+    null;
+
+  // fast path
+  let sdk = pick();
+  if (sdk) return sdk;
+
+  // If an ESM import promise was attached from index.html, await it.
+  const w: any = window as any;
+  if (w.__animatoPromise) {
+    if (isDebug()) console.debug('[annie] awaiting window.__animatoPromise…');
+    try { await w.__animatoPromise; } catch { /* ignore */ }
+    sdk = pick();
+    if (sdk) return sdk;
+  }
+
+  // Ensure we have a script tag present and loaded.
+  try {
+    await ensureAnimatoTag();
+  } catch (e) {
+    if (isDebug()) console.debug('[annie] ensureAnimatoTag() failed', e);
+  }
+
+  // Poll for the global to appear.
+  const start = Date.now();
+  while (!sdk && Date.now() - start < timeoutMs) {
+    await sleep(intervalMs);
+    sdk = pick();
+  }
+  if (sdk) return sdk;
+
+  throw new Error(
+    'Animato SDK not found on window after wait. Ensure a plain script tag loads BEFORE /src/main.ts:\\n' +
+    '&lt;script src="https://app.callannie.ai/animato-sdk.js" crossorigin="anonymous"&gt;&lt;/script&gt;'
+  );
 }
 
 // --- Annie event/memory helpers ---
@@ -303,9 +358,84 @@ function wrapOnPropertyHandlers<T extends object>(obj: T, meta: { runId: string;
   return proxy as T;
 }
 
+function hasWritableSlot(obj: any, prop: string): boolean {
+  try {
+    let o = obj;
+    while (o) {
+      const d = Object.getOwnPropertyDescriptor(o, prop);
+      if (d) return Boolean(d.writable || d.set);
+      o = Object.getPrototypeOf(o);
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+function looksLikeInstance(x: any): boolean {
+  return !!x && (
+    typeof x.on === 'function' ||
+    typeof x.addEventListener === 'function' ||
+    'onDataReceived' in x
+  );
+}
+
+async function resolveAnimatoInstance(Surface: any, opts: AnnieConnectOpts): Promise<any | null> {
+  const w: any = window as any;
+
+  // 1) Preferred: global singleton created by the SDK script
+  if (looksLikeInstance(w.animato)) return w.animato;
+
+  // 2) Some builds attach the instance (or a thin facade) directly on the surface
+  if (looksLikeInstance(Surface)) return Surface;
+  if (looksLikeInstance(Surface?.default)) return Surface.default;
+  if (looksLikeInstance(w.Animato?.animato)) return w.Animato.animato;
+
+  // 3) Factory style API (connect())
+  try {
+    if (typeof Surface?.connect === 'function') {
+      const inst = await Surface.connect({
+        token: opts.token,
+        userId: opts.userId,
+        animatoId: opts.animatoId,
+        username: opts.username ?? 'rizma',
+        mic: !!opts.mic,
+        lang: opts.lang ?? 'en',
+        root: opts.root
+      });
+      if (looksLikeInstance(inst)) return inst;
+    }
+  } catch { /* ignore */ }
+  try {
+    const api = Surface?.default;
+    if (typeof api?.connect === 'function') {
+      const inst = await api.connect({
+        token: opts.token,
+        userId: opts.userId,
+        animatoId: opts.animatoId,
+        username: opts.username ?? 'rizma',
+        mic: !!opts.mic,
+        lang: opts.lang ?? 'en',
+        root: opts.root
+      });
+      if (looksLikeInstance(inst)) return inst;
+    }
+  } catch { /* ignore */ }
+
+  // 4) Legacy UMD constructor (function)
+  if (typeof Surface === 'function') {
+    try {
+      // Signature: new Ctor(token, animatoId, userId, username)
+      const inst = new Surface(opts.token, opts.animatoId, opts.userId, opts.username ?? 'rizma');
+      if (looksLikeInstance(inst)) return inst;
+    } catch { /* ignore */ }
+  }
+
+  return null;
+}
+
 /** Connect and render the avatar into the provided root element. */
 export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
-  const Ctor = await loadAnnie();
+  // Create or obtain the instance depending on SDK surface
+  const Surface: any = await loadAnnie();
 
   // Close any previous instance
   try { avatar?.disconnect?.(); } catch { /* ignore */ }
@@ -317,48 +447,62 @@ export async function connectAnnie(opts: AnnieConnectOpts): Promise<any> {
   };
   currentMeta = meta;
 
-  // ctor: (token, animatoId, userId, username)
-  avatar = new Ctor(opts.token, opts.animatoId, opts.userId, opts.username ?? 'rizma');
+  // Minimal creation logic: resolve an actual instance from whatever surface we have
+  const inst = await resolveAnimatoInstance(Surface, opts);
+  if (!inst) {
+    console.warn('[annie] failed to create/connect Animato instance from surface:', Surface);
+    throw new Error('Unsupported Animato SDK surface (module detected but no instance/connect).');
+  }
+
+  avatar = inst;
   (window as any).__annie = avatar;
   if (isDebug()) {
-    try { console.debug('[annie:keys]', Object.keys(avatar || {})); } catch { }
+    try {
+      const surf = Surface?.default ? 'ESM.default' : Surface?.Animato ? 'ESM.Animato' : typeof Surface;
+      console.debug('[annie] connected via surface:', surf, 'keys=', Object.keys(avatar || {}));
+    } catch {}
   }
-  // Wrap on* handler properties so we can observe callbacks-based SDKs
-  avatar = wrapOnPropertyHandlers(avatar, meta);
 
-  // Direct vendor-recommended hook: animato.on('data-received', ...)
-  const handleDataReceived = (dap: any) => {
-    if (isDebug()) console.debug('[annie:direct:data-received]', dap?.data?.type, dap);
-    // Normalize and persist via our common path
-    pushAnnie('assistant', dap, meta);
-  };
-  if (typeof (avatar as any)?.on === 'function') {
+  // Wrap on* handler properties so we can observe callbacks-based SDKs,
+  // but only if the instance is extensible (some SDK surfaces are sealed).
+  const _locked =
+    !Object.isExtensible(avatar) || Object.isSealed(avatar) || Object.isFrozen(avatar);
+  if (!_locked) {
+    avatar = wrapOnPropertyHandlers(avatar, meta);
+  } else if (isDebug()) {
+    console.debug('[annie] instance is non‑extensible; skipping property monkey‑patching');
+  }
+
+  // New SDK (vanilla JS): only assign if a writable `onDataReceived` slot exists.
+  if (hasWritableSlot(avatar, 'onDataReceived')) {
+    try {
+      (avatar as any).onDataReceived = (payload: any) => {
+        if (isDebug()) {
+          console.debug('[annie:onDataReceived]', payload?.data?.type || payload?.type, payload);
+        }
+        pushAnnie('assistant', payload, meta);
+      };
+      if (isDebug()) console.debug('[annie] onDataReceived handler attached');
+    } catch (e) {
+      if (isDebug()) console.debug('[annie] onDataReceived attach failed:', e);
+    }
+  }
+
+  // Legacy fallback: old UMD emitter API
+  if (!('onDataReceived' in (avatar as any)) && typeof (avatar as any)?.on === 'function') {
+    const handleDataReceived = (dap: any) => {
+      if (isDebug()) console.debug('[annie:direct:data-received]', dap?.data?.type, dap);
+      pushAnnie('assistant', dap, meta);
+    };
     try {
       (avatar as any).on('data-received', handleDataReceived);
-      unsubs.push(() => { try { (avatar as any).off?.('data-received', handleDataReceived); } catch { } });
-    } catch { }
+      unsubs.push(() => { try { (avatar as any).off?.('data-received', handleDataReceived); } catch {} });
+    } catch {}
   }
 
-  const origUser = avatar?.sendUserMessage?.bind(avatar);
-  avatar.sendUserMessage = (text: string) => {
-    pushAnnie('user', { text }, meta);
-    return origUser ? origUser(text) : undefined;
-  };
-
-  const origAsst = avatar?.sendAssistantMessage?.bind(avatar);
-  avatar.sendAssistantMessage = (text: string) => {
-    pushAnnie('assistant', { text }, meta);
-    return origAsst ? origAsst(text) : undefined;
-  };
-
-  const origPrompt = avatar?.sendPrompt?.bind(avatar);
-  avatar.sendPrompt = (text: string) => {
-    pushAnnie('system', { text }, meta);
-    return origPrompt ? origPrompt(text) : undefined;
-  };
-  avatar.setHTMLRoot(opts.root);
-  avatar.setLang(opts.lang ?? 'en');
-  avatar.connect();
+  // avatar.setHTMLRoot(opts.root);
+  // avatar.setLang(opts.lang ?? 'en');
+  // avatar.connect();
 
   // Wait until the SDK signals the room is connected before toggling mic/cam.
   await waitForAnnieConnected(avatar, 1500);

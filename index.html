@@ -13,9 +13,94 @@
   <link rel="mask-icon" href="./assets/safari-pinned-tab.svg" color="#0E0E10">
   <link rel="stylesheet" href="./styles/tokens.css">
   <link rel="stylesheet" href="./styles/app.css">
+  <script src="https://app.callannie.ai/animato-sdk.js"></script>
 </head>
 
 <body>
+  <video id="animato-video" autoplay playsinline></video>
+  <button id="connect-btn">Start Call</button>
+  <button id="test-msg-btn" style="display:none">Send Test Message</button>
+  <script>
+    let animato = null;
+
+    async function connect() {
+      // Get token from YOUR backend (no body needed)
+      // const response = await fetch('/getToken');
+      // const { token } = await response.json();
+
+      token = "...";
+
+      // Initialize Animato SDK
+      animato = new AnimatoSDK.Animato({
+        token: token,
+        animatoId: '1306fb5b-e6fd-4ef6-9853-319735b3168f',
+        userId: 'nq8VsBjx36WZ3IHzfuAiC2mZV5w2',
+        userName: 'rizma'
+      });
+
+      // Set video container
+      const videoParent = document.getElementById('animato-video').parentElement;
+      animato.setHTMLRoot(videoParent);
+      animato.setLang('en');
+
+      // Connect and enable mic
+      await animato.connect();
+      await animato.setMicrophoneEnabled(true);
+      const handle = (payload) => {
+        const d = payload && payload.data ? payload.data : payload;
+        if (!d || typeof d !== 'object') return;
+
+        if (d.type === 'on_text' && typeof d.text === 'string') {
+          const who = String(d.who || '').toLowerCase() === 'user' ? 'user' : 'assistant';
+          saveToMemory(who, d.text.trim());
+        } else if (d.type === 'function_call') {
+          const name = d.name || d.tool || d.function || 'function_call';
+          saveToMemory('assistant', `${String(name)}(…)`);
+        }
+      };
+
+      // Prefer emitter API; fall back to onDataReceived if the SDK exposes it.
+      if (typeof animato.on === 'function') {
+        animato.on('data-received', handle);
+      } else if ('onDataReceived' in animato) {
+        try { animato.onDataReceived = handle; } catch { }
+      }
+
+      // clean up on unload
+      window.addEventListener('beforeunload', () => {
+        try { animato?.off?.('data-received', handle); } catch { }
+        try { animato?.disconnect?.(); } catch { }
+      });
+
+      // Minimal localStorage writer
+      function saveToMemory(role, content) {
+        if (!content) return;
+        const key = 'rizma_memory_v2';
+        let mem;
+        try { mem = JSON.parse(localStorage.getItem(key) || '{"messages":[]}'); } catch { mem = { messages: [] }; }
+        mem.messages.push({ role, content, source: 'annie', ts: Date.now() });
+        console.log(`Saved to memory: ${role}: ${content}`);
+        localStorage.setItem(key, JSON.stringify(mem));
+      }
+
+      // Show test message button
+      document.getElementById('test-msg-btn').style.display = 'inline';
+    }
+
+    // Send test message
+    document.getElementById('test-msg-btn').onclick = () => {
+      if (animato) {
+        animato.sendMessage("Hello, what's your name?");
+      }
+    };
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      if (animato) animato.disconnect();
+    });
+
+    document.getElementById('connect-btn').onclick = connect;
+  </script>
   <!-- Header / Brand -->
   <header class="container">
     <div class="brand">
@@ -138,7 +223,8 @@
           <div class="row align-center gap-12">
             <span id="statsScore" class="big-score mr-8"></span>
             <div class="progress" style="flex:1; height:12px; background:#eee; border-radius:9999px; overflow:hidden;">
-              <div id="statsProgressFill" style="height:100%; width:0%; background:linear-gradient(90deg,#22c55e,#16a34a);"></div>
+              <div id="statsProgressFill"
+                style="height:100%; width:0%; background:linear-gradient(90deg,#22c55e,#16a34a);"></div>
             </div>
             <span id="statsPass" class="dim ml-8 hidden">—</span>
           </div>
@@ -153,12 +239,30 @@
         <div class="panel flex-1 min-280">
           <h3>Delivery</h3>
           <dl class="metrics">
-            <div class="metric"><dt>WPM</dt><dd id="statsWpm">—</dd></div>
-            <div class="metric"><dt>Fillers</dt><dd id="statsFillers">—</dd></div>
-            <div class="metric"><dt>Pacing</dt><dd id="statsPacing">—</dd></div>
-            <div class="metric"><dt>Tone</dt><dd id="statsTone">—</dd></div>
-            <div class="metric"><dt>Talk time</dt><dd id="statsTalkTime">—</dd></div>
-            <div class="metric"><dt>Interruptions</dt><dd id="statsInterruptions">—</dd></div>
+            <div class="metric">
+              <dt>WPM</dt>
+              <dd id="statsWpm">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Fillers</dt>
+              <dd id="statsFillers">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Pacing</dt>
+              <dd id="statsPacing">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Tone</dt>
+              <dd id="statsTone">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Talk time</dt>
+              <dd id="statsTalkTime">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Interruptions</dt>
+              <dd id="statsInterruptions">—</dd>
+            </div>
           </dl>
         </div>
       </div>
@@ -204,7 +308,7 @@
         if (disconnectBtn) disconnectBtn.click();
         setAvatarConnected(false);
         // Announce end and show the results page
-        try { document.dispatchEvent(new Event('session:end')); } catch {}
+        try { document.dispatchEvent(new Event('session:end')); } catch { }
         const stats = document.getElementById('statsPage');
         if (stats) stats.classList.remove('hidden');
         document.getElementById('avatarPanel')?.classList.add('hidden');
@@ -248,7 +352,7 @@
           } else {
             scenarioTitleEl.textContent = label;
           }
-        } catch {}
+        } catch { }
       }
       function showScenarioTitle(show) {
         if (!scenarioTitleEl) return;
