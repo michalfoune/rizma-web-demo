@@ -10,7 +10,7 @@ import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/s
 import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
-import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage } from './integrations/annie';
+import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage, ensureLivePane, destroyLivePane, renderLiveTranscript } from './integrations/annie';
 import { Animato_UserID, Animato_ID, Animato_Test_Token } from './config/constants';
 
 // Logger scopes & defaults
@@ -162,6 +162,7 @@ function computeEvalStats(msgs: ChatMessage[]): EvalStats {
   };
 }
 
+
 function showStatsPage(stats: EvalStats, title: string) {
   // Ensure any live sessions are terminated when showing stats
   try { endAllSessions(); } catch {}
@@ -223,6 +224,7 @@ function endAllSessions(): void {
 async function handleAvatarEndClick(): Promise<void> {
   // Ensure media is stopped first, then announce end and render results
   endAllSessions();
+  try { destroyLivePane(); } catch {}
   try { document.dispatchEvent(new Event('session:end')); } catch { }
   // Compute and show lightweight results
   saveMemory();
@@ -381,6 +383,14 @@ bindControls({
         const animato = await connectAnnie({ token, userId, animatoId, mic, root, userName: 'Michal', lang: 'en', runId });
         console.log('Annie connected:', animato);
 
+        // Initialize the live transcript pane on the avatar's black strip
+        try {
+          ensureLivePane();
+          renderLiveTranscript(memory.messages || []);
+        } catch (err) {
+          uiLog.debug('live pane init error: %o', err);
+        }
+
         // Hide manual controls and show close (X)
         document.getElementById('annieControls')?.classList.add('hidden');
         document.getElementById('avatarClose')?.classList.remove('hidden');
@@ -476,6 +486,47 @@ onDomReady(() => {
     statsStartIndex = 0;
     currentRunId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     setDefaultRunId(currentRunId);
+    try {
+      ensureLivePane();
+      renderLiveTranscript([]);
+    } catch {}
+  });
+
+  // Live transcript: update on memory appends (emitted by annie.ts)
+  document.addEventListener('memory:append', () => {
+    try {
+      ensureLivePane();
+      renderLiveTranscript(memory.messages || []);
+    } catch (e) {
+      uiLog.debug('live transcript update error: %o', e);
+    }
+  });
+
+  // Live transcript events coming from annie.ts (bubbled & composed)
+  document.addEventListener('live:message', () => {
+    try {
+      ensureLivePane();
+      renderLiveTranscript(memory.messages || []);
+    } catch (e) {
+      uiLog.debug('live:message render error: %o', e);
+    }
+  });
+
+  document.addEventListener('live:reset', () => {
+    try {
+      ensureLivePane();
+      renderLiveTranscript([]);
+    } catch (e) {
+      uiLog.debug('live:reset error: %o', e);
+    }
+  });
+
+  document.addEventListener('live:end', () => {
+    try {
+      destroyLivePane();
+    } catch (e) {
+      uiLog.debug('live:end error: %o', e);
+    }
   });
 
   // Close (X) on avatar → stop media and show results (support two possible IDs)
@@ -493,6 +544,7 @@ onDomReady(() => {
   // Also react to a generic session:end if fired elsewhere
   document.addEventListener('session:end', () => {
     endAllSessions();
+    try { destroyLivePane(); } catch {}
   });
 
   // Tabs

@@ -17,6 +17,37 @@ import { PROXY_BASE } from '../config/constants';
 let inst: any | null = null;
 let selfCamStream: MediaStream | null = null;
 
+/** Toggle the landing UI (avatar card + mode row) without heuristics. */
+function setLandingHidden(hidden: boolean) {
+  const ids = ['#avatarCard', '#modeRow'];
+  for (const sel of ids) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el) el.classList.toggle('hidden', hidden);
+  }
+}
+
+/** Fit the stage box to the intrinsic size of the remote media to avoid black bars. */
+function fitStageToRemote(stageId = 'annieStage') {
+  const stage = document.getElementById(stageId) as HTMLElement | null;
+  if (!stage) return;
+  const media = stage.querySelector('video,canvas,img') as HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | null;
+  if (!media) return;
+
+  const apply = () => {
+    let w = 0, h = 0;
+    if (media instanceof HTMLVideoElement) { w = media.videoWidth; h = media.videoHeight; }
+    else if (media instanceof HTMLCanvasElement) { w = media.width; h = media.height; }
+    else if (media instanceof HTMLImageElement) { w = media.naturalWidth; h = media.naturalHeight; }
+    if (w > 0 && h > 0) stage.style.aspectRatio = `${w}/${h}`;
+  };
+
+  if (media instanceof HTMLVideoElement && (!media.videoWidth || !media.videoHeight)) {
+    media.addEventListener('loadedmetadata', apply, { once: true });
+  } else {
+    apply();
+  }
+}
+
 type Meta = { persona?: string; runId?: string; userName?: string };
 
 function escapeRegExp(s: string) {
@@ -56,6 +87,16 @@ function ctor() {
 function save(role: ChatRole, content: string, meta?: Meta) {
   if (!content) return;
   addMessageWithMetadata(role, content, { source: 'avatar', persona: meta?.persona, runId: meta?.runId });
+  try {
+    document.dispatchEvent(
+      new CustomEvent('live:message', {
+        detail: { role, content },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    console.log('[annie:message]', { role, content });
+  } catch {}
 }
 
 function wireTranscripts(i: any, meta?: Meta) {
@@ -101,6 +142,8 @@ export async function connectAnnie(opts: AnnieConnectOpts) {
   try { inst?.disconnect?.(); } catch {}
   inst = null;
 
+  try { document.dispatchEvent(new CustomEvent('live:reset', { bubbles: true, composed: true })); } catch {}
+
   const Animato = ctor();
   const a = new Animato({
     token: opts.token,
@@ -114,6 +157,20 @@ export async function connectAnnie(opts: AnnieConnectOpts) {
 
   await a.connect();
   if (opts.mic) await a.setMicrophoneEnabled?.(true);
+
+  try {
+    document.dispatchEvent(
+      new CustomEvent('live:meta', {
+        detail: { persona: opts.persona, runId: opts.runId, userName: opts.userName ?? 'Michal' },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  } catch {}
+
+  // Hide landing UI and size stage to remote media
+  try { setLandingHidden(true); } catch {}
+  try { fitStageToRemote('annieStage'); } catch {}
 
   // Wire transcripts
   wireTranscripts(a, { persona: opts.persona, runId: opts.runId, userName: opts.userName ?? 'Michal' });
@@ -131,7 +188,15 @@ export function disconnectAnnie() {
   try { inst?.disconnect?.(); } catch {}
   inst = null;
   stopSelfCam(); // release camera resources
+
+  // Restore landing UI and reset stage sizing
+  try { setLandingHidden(false); } catch {}
+  const stageEl = document.getElementById('annieStage') as HTMLElement | null;
+  if (stageEl) stageEl.style.removeProperty('aspect-ratio');
+
   try { (window as any).__annie = null; } catch {}
+
+  try { document.dispatchEvent(new CustomEvent('live:end', { bubbles: true, composed: true })); } catch {}
 }
 
 export function isAnnieConnected() {
@@ -238,4 +303,65 @@ export async function getAnnieToken(userId: string, _animatoId?: string): Promis
   const token = j?.token || j?.accessToken || j?.data?.token;
   if (typeof token === 'string' && token.length > 0) return token;
   throw new Error(`annie-token missing in response. Keys=${Object.keys(j || {}).join(',')}`);
+}
+
+export function ensureLivePane(): HTMLElement | null {
+  const stage = document.getElementById('annieStage')
+             || document.querySelector('.annie-stage') as HTMLElement | null;
+  if (!stage) return null;
+
+  let pane = document.getElementById('liveTranscript') as HTMLElement | null;
+  if (!pane) {
+    pane = document.createElement('aside');
+    pane.id = 'liveTranscript';
+    stage.appendChild(pane);
+  }
+  return pane;
+}
+
+export function destroyLivePane(): void {
+  const pane = document.getElementById('liveTranscript');
+  if (pane && pane.parentElement) pane.parentElement.removeChild(pane);
+}
+
+// Tiny HTML escaper reused below
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function renderLiveTranscript(msgs: Array<{role: string, content?: string}>, limit = 60): void {
+  const pane = document.getElementById('liveTranscript');
+  if (!pane) return;
+
+  const recent = msgs.slice(-limit);
+  let last: 'user'|'assistant'|null = null;
+  let html = '';
+
+  for (const m of recent) {
+    const role: 'user'|'assistant' =
+      (m.role === 'user' ? 'user' : 'assistant');
+
+    const showLabel = role !== last;
+    last = role;
+
+    const label = showLabel
+      ? `<div class="label">${role === 'user' ? 'User' : 'Assistant'}</div>`
+      : '';
+
+    const text = htmlEscape(m.content || '').replace(/\n/g, '<br>');
+
+    html += `
+      <div style="display:flex;${role === 'user' ? 'justify-content:flex-end;' : 'justify-content:flex-start;'}">
+        <div class="bubble ${role}">
+          ${label}
+          <div>${text}</div>
+        </div>
+      </div>`;
+  }
+
+  pane.innerHTML = html;
+  pane.scrollTop = pane.scrollHeight; // auto-scroll to latest
 }

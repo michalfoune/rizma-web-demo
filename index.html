@@ -17,90 +17,6 @@
 </head>
 
 <body>
-  <video id="animato-video" autoplay playsinline></video>
-  <button id="connect-btn">Start Call</button>
-  <button id="test-msg-btn" style="display:none">Send Test Message</button>
-  <script>
-    let animato = null;
-
-    async function connect() {
-      // Get token from YOUR backend (no body needed)
-      // const response = await fetch('/getToken');
-      // const { token } = await response.json();
-
-      token = "@v2@7b22616a223a2265794a68624763694f694a49557a49314e694973496e523563434936496b705856434a392e65794a6a62476c6c626e5266615751694f694a426456564c523146464d334179617a686a61324a585554683555434973496e567a5a584a66615751694f694a756354685763304a7165444d3256316f7a535568365a6e564261554d79625670574e586379496977696332567a63326c76626c39705a434936496e526c633352664e6a6b694c434a70595851694f6a45334e6a4d774e6a67314d544d73496d5634634349364d5463324d7a41334d444d784d33302e37333930672d764d30436d4e6f32714b63787578644f4738753230305043754d4c55586963324772446d4d227d";
-
-      // Initialize Animato SDK
-      animato = new AnimatoSDK.Animato({
-        token: token,
-        animatoId: '1306fb5b-e6fd-4ef6-9853-319735b3168f',
-        userId: 'nq8VsBjx36WZ3IHzfuAiC2mZV5w2',
-        userName: 'Michal'
-      });
-
-      // Set video container
-      const videoParent = document.getElementById('animato-video').parentElement;
-      animato.setHTMLRoot(videoParent);
-      animato.setLang('en');
-
-      // Connect and enable mic
-      await animato.connect();
-      await animato.setMicrophoneEnabled(true);
-      const handle = (payload) => {
-        const d = payload && payload.data ? payload.data : payload;
-        if (!d || typeof d !== 'object') return;
-
-        if (d.type === 'on_text' && typeof d.text === 'string') {
-          const who = String(d.who || '').toLowerCase() === 'user' ? 'user' : 'assistant';
-          saveToMemory(who, d.text.trim());
-        } else if (d.type === 'function_call') {
-          const name = d.name || d.tool || d.function || 'function_call';
-          saveToMemory('assistant', `${String(name)}(…)`);
-        }
-      };
-
-      // Prefer emitter API; fall back to onDataReceived if the SDK exposes it.
-      if (typeof animato.on === 'function') {
-        animato.on('data-received', handle);
-      } else if ('onDataReceived' in animato) {
-        try { animato.onDataReceived = handle; } catch { }
-      }
-
-      // clean up on unload
-      window.addEventListener('beforeunload', () => {
-        try { animato?.off?.('data-received', handle); } catch { }
-        try { animato?.disconnect?.(); } catch { }
-      });
-
-      // Minimal localStorage writer
-      function saveToMemory(role, content) {
-        if (!content) return;
-        const key = 'rizma_memory_v2';
-        let mem;
-        try { mem = JSON.parse(localStorage.getItem(key) || '{"messages":[]}'); } catch { mem = { messages: [] }; }
-        mem.messages.push({ role, content, source: 'annie', ts: Date.now() });
-        console.log(`Saved to memory: ${role}: ${content}`);
-        localStorage.setItem(key, JSON.stringify(mem));
-      }
-
-      // Show test message button
-      document.getElementById('test-msg-btn').style.display = 'inline';
-    }
-
-    // Send test message
-    document.getElementById('test-msg-btn').onclick = () => {
-      if (animato) {
-        animato.sendMessage("Hello, what's your name?");
-      }
-    };
-
-    // Cleanup on page unload
-    window.addEventListener('beforeunload', () => {
-      if (animato) animato.disconnect();
-    });
-
-    document.getElementById('connect-btn').onclick = connect;
-  </script>
   <!-- Header / Brand -->
   <header class="container">
     <div class="brand">
@@ -111,7 +27,7 @@
   </header>
 
   <!-- Mode Tabs -->
-  <nav class="tabs container" aria-label="Mode">
+  <nav id="modeRow" class="tabs container" aria-label="Mode">
     <div class="segmented" role="tablist" aria-label="Mode">
       <input type="radio" name="mode" id="modeRealtime" class="seg-radio" />
       <label id="tabRealtime" class="seg-label" for="modeRealtime" role="tab" aria-selected="true">Voice Only</label>
@@ -122,7 +38,7 @@
   </nav>
 
   <!-- Therapist Card (Realtime default view) -->
-  <section class="card">
+  <section id="avatarCard" class="card">
     <img src="./assets/rizma-doc-3-elena_cropped.png" alt="Elena" class="avatar" />
     <h1 class="title">Elena</h1>
     <p class="lead">Interview • Feedback • Small Talk</p>
@@ -193,6 +109,8 @@
       <div id="annieStage" class="annie-stage mt-12">
         <div id="annieRoot" class="annie-root"></div>
         <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
+        <!-- live transcript overlay -->
+        <aside id="liveTranscript" class="live-transcript" aria-live="polite"></aside>
       </div>
     </div>
   </section>
