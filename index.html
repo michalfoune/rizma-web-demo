@@ -13,7 +13,7 @@
   <link rel="mask-icon" href="./assets/safari-pinned-tab.svg" color="#0E0E10">
   <link rel="stylesheet" href="./styles/tokens.css">
   <link rel="stylesheet" href="./styles/app.css">
-  <script src="https://app.callannie.ai/animato-sdk.js"></script>
+  <script src="https://app.callannie.ai/animato-sdk.js" crossorigin="anonymous"></script>
 </head>
 
 <body>
@@ -28,14 +28,14 @@
       // const response = await fetch('/getToken');
       // const { token } = await response.json();
 
-      token = "...";
+      token = "@v2@7b22616a223a2265794a68624763694f694a49557a49314e694973496e523563434936496b705856434a392e65794a6a62476c6c626e5266615751694f694a426456564c523146464d334179617a686a61324a585554683555434973496e567a5a584a66615751694f694a756354685763304a7165444d3256316f7a535568365a6e564261554d79625670574e586379496977696332567a63326c76626c39705a434936496e526c633352664e6a6b694c434a70595851694f6a45334e6a4d774e6a67314d544d73496d5634634349364d5463324d7a41334d444d784d33302e37333930672d764d30436d4e6f32714b63787578644f4738753230305043754d4c55586963324772446d4d227d";
 
       // Initialize Animato SDK
       animato = new AnimatoSDK.Animato({
         token: token,
         animatoId: '1306fb5b-e6fd-4ef6-9853-319735b3168f',
         userId: 'nq8VsBjx36WZ3IHzfuAiC2mZV5w2',
-        userName: 'rizma'
+        userName: 'Michal'
       });
 
       // Set video container
@@ -268,6 +268,7 @@
       </div>
 
       <div class="mt-16">
+        <button id="statsRetry" class="btn">Try again</button>
         <h3>Transcript</h3>
         <div id="statsTranscript" class="transcript mono"></div>
       </div>

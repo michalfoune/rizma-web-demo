@@ -608,13 +608,13 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 #statsRetry {
   display: block;                 /* allows centering via margin auto */
   margin: 60px auto 28px;         /* space above & below; centered */
-  min-width: 240px;               /* make it visually substantial */
-  height: 56px;                   /* taller button */
+  min-width: 130px;               /* make it visually substantial */
+  height: 40px;                   /* taller button */
   padding: 0 22px;                /* horizontal padding */
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1;
-  border-radius: 12px;
+  border-radius: 18px;
   color: #fff;
   background: var(--success, #15803D);
   border: none;

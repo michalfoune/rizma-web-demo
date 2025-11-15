@@ -1,6 +1,6 @@
 import { state } from './state/appState';
 import { memory, saveMemory, loadMemory, clearMemory, setDefaultRunId, getMessages } from './state/memory';
-import type { ChatMessage as MemChatMessage, ChatRole } from './state/memory';
+import type { ChatMessage, ChatRole } from './state/memory';
 import { createPeerConnection, waitForIce } from './rtc/connection';
 import { getEl, setText, setVisible, onDomReady } from './ui/dom';
 import { bindControls, setBtnRecordingUI, setStatus } from './ui/controls';
@@ -10,9 +10,8 @@ import { wireDataChannel, sendTextAndRespond, sendResponseCreate } from './rtc/s
 import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
-import { connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage } from './integrations/annie';
+import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage } from './integrations/annie';
 import { Animato_UserID, Animato_ID, Animato_Test_Token } from './config/constants';
-import { httpLLM, httpTTS } from './api/openaiHttp';
 
 // Logger scopes & defaults
 if ((import.meta as any)?.env?.MODE === 'development') setLevel('debug');
@@ -23,190 +22,8 @@ const dcLog = rtcLog.child('dc');
 const httpLog = rtcLog.child('http');
 const evtLog = rtcLog.child('evt');
 
-// --- Global audio/RTC kill‑switch instrumentation ---------------------------
-const KILL = {
-  pcs: new Set<RTCPeerConnection>(),
-  audioCtxs: new Set<any>(),
-  mediaEls: new Set<HTMLMediaElement>(),
-  streams: new Set<MediaStream>(),
-};
-
-function initKillSwitch(): void {
-  const g: any = globalThis as any;
-  if (g.__killSwitchInstalled) return;
-  g.__killSwitchInstalled = true;
-
-  // Track RTCPeerConnections (vendor SDK may open its own)
-  // Track RTCPeerConnections (vendor SDK may open its own)
-  const OrigPC = g.RTCPeerConnection;
-  if (typeof OrigPC === 'function') {
-    const WrappedPC = function (...args: any[]) {
-      const pc: RTCPeerConnection = new OrigPC(...args);
-      try {
-        KILL.pcs.add(pc);
-        pc.addEventListener('connectionstatechange', () => {
-          if (pc.connectionState === 'closed' || pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-            KILL.pcs.delete(pc);
-          }
-        });
-      } catch { }
-      return pc as any;
-    } as any;
-
-    WrappedPC.prototype = OrigPC.prototype;
-    g.RTCPeerConnection = WrappedPC;
-  }
-
-  // Track AudioContexts (including Safari/WebKit)
-  const wrapAC = (name: string) => {
-    const C = g[name];
-    if (typeof C === 'function') {
-      const Wrapped = function (...args: any[]) {
-        const ctx = new C(...args);
-        try { KILL.audioCtxs.add(ctx); } catch { }
-        return ctx;
-      } as any;
-      Wrapped.prototype = C.prototype;
-      g[name] = Wrapped;
-    }
-  };
-  wrapAC('AudioContext');
-  wrapAC('webkitAudioContext');
-
-  // Track media elements as they start playing; also capture assigned MediaStreams
-  const HME: any = g.HTMLMediaElement?.prototype;
-  if (HME && typeof HME.play === 'function') {
-    const origPlay = HME.play;
-    HME.play = function (...a: any[]) {
-      try { KILL.mediaEls.add(this as HTMLMediaElement); } catch { }
-      return origPlay.apply(this, a);
-    };
-    const desc = Object.getOwnPropertyDescriptor(HME, 'srcObject') ||
-      Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
-    if (desc && desc.set) {
-      const origSet = desc.set;
-      Object.defineProperty(HME, 'srcObject', {
-        set(v: any) {
-          try { if (v && v instanceof MediaStream) KILL.streams.add(v); } catch { }
-          return origSet!.call(this, v);
-        },
-        get: desc.get
-      });
-    }
-  }
-
-  // Track getUserMedia streams
-  const md = g.navigator?.mediaDevices;
-  if (md && typeof md.getUserMedia === 'function') {
-    const origGUM = md.getUserMedia.bind(md);
-    md.getUserMedia = async (constraints: any) => {
-      const s = await origGUM(constraints);
-      try { KILL.streams.add(s); } catch { }
-      return s;
-    };
-  }
-}
-
-async function hardStopAllTrackedMedia(): Promise<void> {
-  // Pause & detach any tracked media elements
-  for (const el of Array.from(KILL.mediaEls)) {
-    try { el.muted = true; } catch { }
-    try { el.pause?.(); } catch { }
-    try {
-      const ms = (el as any).srcObject as MediaStream | null;
-      if (ms) {
-        try { ms.getTracks().forEach(t => { try { t.stop(); } catch { } }); } catch { }
-      }
-    } catch { }
-    try { (el as any).srcObject = null; } catch { }
-    try { el.removeAttribute('src'); } catch { }
-    try { el.load?.(); } catch { }
-  }
-  KILL.mediaEls.clear();
-
-  // Stop all captured MediaStreams
-  for (const s of Array.from(KILL.streams)) {
-    try { s.getTracks?.().forEach(t => { try { t.stop(); } catch { } }); } catch { }
-  }
-  KILL.streams.clear();
-
-  // Close/suspend all AudioContexts safely
-  for (const ctx of Array.from(KILL.audioCtxs) as any[]) {
-    try {
-      // Prefer close(); only suspend if close() is not available.
-      if (typeof ctx.close === 'function') {
-        if (ctx.state !== 'closed') {
-          await Promise.resolve(ctx.close()).catch(() => { });
-        }
-      } else if (typeof ctx.suspend === 'function') {
-        if (ctx.state === 'running') {
-          await Promise.resolve(ctx.suspend()).catch(() => { });
-        }
-      }
-    } catch { }
-  }
-  KILL.audioCtxs.clear();
-
-  // Close all captured RTCPeerConnections
-  for (const pc of Array.from(KILL.pcs)) {
-    try { pc.getSenders?.().forEach((s: any) => { try { s.track?.stop?.(); } catch { } }); } catch { }
-    try { if (pc.connectionState !== 'closed') pc.close?.(); } catch { }
-  }
-  KILL.pcs.clear();
-}
-
-// Install the kill‑switch ASAP (before any vendor SDK creates contexts/PCs)
-initKillSwitch();
-// Suppress benign post‑close WebRTC rejections (SDK may still push ICE/SDP after we closed the PC)
-if (typeof window !== 'undefined') {
-  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
-    const msg = String((e as any)?.reason?.message || (e as any)?.reason || '');
-    if (
-      /RTCPeerConnection.*signalingState.*closed/i.test(msg) ||
-      /Failed to execute 'addIceCandidate'.*signalingState.*closed/i.test(msg) ||
-      /setRemoteDescription.*signalingState.*closed/i.test(msg)
-    ) {
-      e.preventDefault(); // ignore late SDP/ICE during teardown
-    }
-  });
-}
-// ---------------------------------------------------------------------------
 
 // OpenAI key stays in Cloudflare Worker secret; browser calls proxy
-const API_BASE = "https://rizma-proxy.rizma.workers.dev/openai";
-
-// --- Annie (Animato) token proxy base & helper (do not touch OpenAI endpoints)
-const PROXY_BASE = ((import.meta as any)?.env?.VITE_PROXY_BASE as string) || 'https://rizma-proxy.rizma.workers.dev';
-
-async function getAnnieToken(userId: string, animatoId: string): Promise<string> {
-  void animatoId;
-  // Always hit the Cloudflare Worker; never fall back to a relative path
-  const base = String(PROXY_BASE || '').replace(/\/+$/, '');
-  const url = `${base}/annie-token`;
-
-  const sessionId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, sessionId })
-    });
-    uiLog.info('Annie token POST %s → %d', url, res.status);
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Annie token endpoint returned ${res.status}. URL=${url}. Body=${text.slice(0, 200)}`);
-    }
-    const j = await res.json().catch(() => ({} as any));
-    const token = j?.token || j?.accessToken || j?.data?.token;
-    if (typeof token === 'string' && token.length > 0) return token;
-    throw new Error(`Annie token endpoint did not return a token field. URL=${url}. BodyKeys=${Object.keys(j || {}).join(',')}`);
-  } catch (e) {
-    uiLog.error('Annie token fetch failed: %o', e);
-    throw e;
-  }
-}
-
 let remoteAudioCleanup: (() => void) | null = null;
 
 const btn = getEl('micFab') as HTMLButtonElement | null;
@@ -234,17 +51,39 @@ interface EvalStats {
   strengths: string[]; improvements: string[];
   fillerPer100: number; toneHint: string; paceHint: string;
   transcript: string;
+  /** HTML-rendered transcript with chat-style bubbles (sanitized) */
+  transcriptHtml: string;
 }
 
-function sliceSinceStart(msgs: MemChatMessage[], start: number): MemChatMessage[] {
+function sliceSinceStart(msgs: ChatMessage[], start: number): ChatMessage[] {
   if (!Array.isArray(msgs)) return [];
   const i = Math.max(0, Math.min(start, msgs.length));
   return msgs.slice(i);
 }
 
-function computeEvalStats(msgs: MemChatMessage[]): EvalStats {
-  const userTurns = msgs.filter(m => m?.role?.toLowerCase() === 'user');
-  const text = userTurns.map(m => m.content || '').join(' ');
+// Escape HTML for safe insertion
+function escapeHtml(s: string): string {
+  return (s || '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[c] || c
+  );
+}
+// Normalize role names and provide display labels
+function normalizeRole(r: string | undefined | null): 'user' | 'assistant' | 'other' {
+  const v = (r || '').toLowerCase();
+  if (v === 'user') return 'user';
+  if (v === 'assistant' || v === 'elena') return 'assistant';
+  return 'other';
+}
+function computeEvalStats(msgs: ChatMessage[]): EvalStats {
+  const userTurns = msgs.filter(m => normalizeRole(m?.role) === 'user');
+
+  // Plain-text transcript used for logging / fallback
+  const text = msgs
+    .filter(m => normalizeRole(m.role) !== 'other')
+    .map(m => `${normalizeRole(m.role) === 'user' ? 'User' : 'Assistant'}: ${m.content || ''}`)
+    .join('\n\n') + '\n';
+  console.log(`This is the text transcript: ${text}`);
+
   const words = (text.match(/\b\w+\b/g) || []).length;
   const fillers = (text.match(/\b(um|uh|erm|like|you know|sort of|kinda|basically)\b/gi) || []).length;
   const fillerPer100 = words ? (fillers / words) * 100 : 0;
@@ -268,17 +107,64 @@ function computeEvalStats(msgs: MemChatMessage[]): EvalStats {
   score += Math.min(10, questions * 2);
   score = Math.max(40, Math.min(100, score));
 
+  // Build WhatsApp-like HTML transcript:
+  // - Assistant bubbles left, User bubbles right
+  // - Show bold "Assistant:" / "User:" only on first bubble of a role run
+  const bubbles: string[] = [];
+  let lastRole: 'user' | 'assistant' | 'other' | null = null;
+
+  for (const m of msgs) {
+    const role = normalizeRole(m.role);
+    if (role === 'other') continue; // skip system/etc
+    const isUser = role === 'user';
+    const showLabel = role !== lastRole;
+    lastRole = role;
+
+    const labelHtml = showLabel
+      ? `<div style="font-weight:600;margin:0 0 4px 0;">${isUser ? 'User' : 'Assistant'}</div>`
+      : '';
+
+    // Escape only the message content; keep container tags as real HTML
+    const msgHtml = escapeHtml(m.content || '').replace(/\n/g, '<br>');
+
+    const bubble = `
+      <div style="display:flex; ${isUser ? 'justify-content:flex-end;' : 'justify-content:flex-start;'}">
+        <div style="
+          max-width:80%;
+          background:${isUser ? '#d9fdd3' : '#f1f5f9'};
+          color:#111;
+          border-radius:14px;
+          padding:8px 12px;
+          margin:4px 0;
+          box-shadow:0 1px 1px rgba(0,0,0,.08);
+          line-height:1.35;
+        ">
+          ${labelHtml}
+          <div>${msgHtml}</div>
+        </div>
+      </div>`;
+    bubbles.push(bubble);
+  }
+
+  const transcriptHtml =
+    `<div style="display:flex;flex-direction:column;gap:6px;">${bubbles.join('')}</div>`;
+
   return {
-    score, pass: score >= 70,
+    score,
+    pass: score >= 70,
     strengths: strengths.length ? strengths : ['Kept the conversation going'],
     improvements: improvements.length ? improvements : ['Provide one concrete example'],
     fillerPer100: Math.round(fillerPer100 * 10) / 10,
-    toneHint, paceHint,
-    transcript: text.trim(),
+    toneHint,
+    paceHint,
+    transcript: text,
+    transcriptHtml
   };
 }
 
 function showStatsPage(stats: EvalStats, title: string) {
+  // Ensure any live sessions are terminated when showing stats
+  try { endAllSessions(); } catch {}
   const page = document.getElementById('statsPage');
   if (!page) return;
 
@@ -296,7 +182,12 @@ function showStatsPage(stats: EvalStats, title: string) {
   if (iUL) iUL.innerHTML = stats.improvements.map(s => `<li>${s}</li>`).join('');
 
   const tr = document.getElementById('statsTranscript') as HTMLElement | null;
-  if (tr) tr.textContent = stats.transcript || 'Transcript unavailable for this session.';
+  if (tr) {
+    // Render chat-style HTML bubbles (contents already sanitized)
+    tr.innerHTML =
+      stats.transcriptHtml ||
+      escapeHtml(stats.transcript || 'Transcript unavailable for this session.').replace(/\n/g, '<br>');
+  }
 
   page.classList.remove('hidden');
   document.getElementById('avatarPanel')?.classList.add('hidden');
@@ -318,275 +209,31 @@ function showStatsPage(stats: EvalStats, title: string) {
   }, { once: true });
 }
 
-// Bridge CallAnnie "data-received" payloads directly from the SDK instance we just created (no globals)
-function attachAnnieDirect(inst: any): void {
-  if (!inst) return;
-
-  // Prefer the event-emitter API if present.
-  if (typeof inst.on === 'function') {
-    const handler = (payload: any) => {
-      try {
-        const d = (payload && payload.data) ? payload.data : payload;
-        if (!d || typeof d !== 'object') return;
-
-        if (d.type === 'function_call') {
-          const name = d.name || d.tool || d.function || 'function_call';
-          memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
-          saveMemory();
-          return;
-        }
-
-        if (d.type === 'on_text' && typeof d.text === 'string') {
-          const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
-          const text = d.text.trim();
-          if (!text) return;
-          memory.messages.push({ role: who as ChatRole, content: text });
-          saveMemory();
-          return;
-        }
-      } catch { /* noop */ }
-    };
-
-    try { inst.on('data-received', handler); } catch { /* noop */ }
-    return;
-  }
-
-  // Vanilla surface fallback: attach only if the slot exists and is writable.
-  const proto = Object.getPrototypeOf(inst) || {};
-  const desc =
-    Object.getOwnPropertyDescriptor(inst, 'onDataReceived') ||
-    Object.getOwnPropertyDescriptor(proto, 'onDataReceived');
-
-  if (desc && (desc.writable || desc.set)) {
-    try {
-      (inst as any).onDataReceived = (payload: any) => {
-        try {
-          const d = (payload && payload.data) ? payload.data : payload;
-          if (!d || typeof d !== 'object') return;
-
-          if (d.type === 'function_call') {
-            const name = d.name || d.tool || d.function || 'function_call';
-            memory.messages.push({ role: 'assistant', content: `${String(name)}(…)` });
-            saveMemory();
-            return;
-          }
-
-          if (d.type === 'on_text' && typeof d.text === 'string') {
-            const who = (String(d.who || '').toLowerCase() === 'user') ? 'user' : 'assistant';
-            const text = d.text.trim();
-            if (!text) return;
-            memory.messages.push({ role: who as ChatRole, content: text });
-            saveMemory();
-            return;
-          }
-        } catch { /* noop */ }
-      };
-    } catch { /* noop */ }
-  } else {
-    console.warn('[annie-direct] invalid animato instance (no emitter / non-writable onDataReceived)');
-  }
-}
-
-let tearingDown = false;
 
 // === Media/Audio/SDK helpers (extracted for deduplication) ===
 
-/** Force-flush any buffered audio by briefly replacing the source with a silent stream. */
-async function flushBufferedAudio(el: HTMLMediaElement): Promise<void> {
-  try {
-    el.muted = true;
-    el.volume = 0;
-    // Create a short‑lived AudioContext with a silent source
-    const AC: any = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const dest = ctx.createMediaStreamDestination();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    gain.gain.value = 0;            // silence
-    osc.connect(gain).connect(dest);
-    osc.start();
-    // Swap in the silent stream to flush any residual buffer
-    (el as any).srcObject = dest.stream;
-    try { await el.play(); } catch { /* autoplay lock or already paused */ }
-    // Give the browser a moment to commit the swap
-    await new Promise(r => setTimeout(r, 120));
-    // Blank back out
-    try { el.pause(); } catch { }
-    try { (el as any).srcObject = null; } catch { }
-    try { el.removeAttribute('src'); } catch { }
-    try { el.load?.(); } catch { }
-    // Tear down the context
-    try { osc.stop(); } catch { }
-    try { await ctx.close(); } catch { }
-  } catch {
-    /* ignore */
-  }
-}
-
-function stopMediaIn(root: HTMLElement | null): void {
-  if (!root) return;
-  const media = root.querySelectorAll('video, audio');
-  media.forEach((el) => {
-    try { (el as HTMLMediaElement).muted = true; } catch { }
-    try { (el as HTMLMediaElement).volume = 0; } catch { }
-    try { (el as HTMLMediaElement).pause?.(); } catch { }
-    // Stop/detach any live MediaStream
-    try {
-      const ms = (el as any).srcObject as MediaStream | null;
-      if (ms) ms.getTracks().forEach(t => { try { t.stop(); } catch { } });
-    } catch { }
-    try { (el as any).srcObject = null; } catch { }
-    try { (el as HTMLMediaElement).removeAttribute('src'); } catch { }
-    try { (el as HTMLMediaElement).currentTime = 0; } catch { }
-    try { (el as HTMLMediaElement).load?.(); } catch { }
-    // Best-effort: flush any buffered tail audio
-    try { void flushBufferedAudio(el as HTMLMediaElement); } catch { }
-  });
-
-  // Remove any SDK iframes under this root (kills cross‑origin audio nodes)
-  try {
-    const iframes = root.querySelectorAll('iframe');
-    iframes.forEach((f) => {
-      try { (f as HTMLIFrameElement).src = 'about:blank'; } catch { }
-      try { f.remove(); } catch { }
-    });
-  } catch { }
-}
-
-/** Close/suspend any AudioContexts we can discover on window (defensive). */
-async function closePossibleAudioContexts(): Promise<void> {
-  try {
-    const g: any = globalThis as any;
-    const maybeCtxs: any[] = [];
-    // Common names we have seen in vendor builds
-    ['audioCtx', 'audioContext', '__audioCtx', '__annieAudioContext', '__ca_audioctx'].forEach(k => {
-      if (g && g[k]) maybeCtxs.push(g[k]);
-    });
-    // Fallback: heuristic scan of globals (guarded)
-    try {
-      for (const k in g) {
-        const v = (g as any)[k];
-        if (!v) continue;
-        const name = v?.constructor?.name || '';
-        if (name.includes('AudioContext') || name.includes('OfflineAudioContext')) {
-          maybeCtxs.push(v);
-        }
-      }
-    } catch { }
-    for (const ac of maybeCtxs) {
-      try {
-        if (typeof ac.close === 'function') {
-          if (ac.state !== 'closed') {
-            await Promise.resolve(ac.close()).catch(() => { });
-          }
-        } else if (typeof ac.suspend === 'function') {
-          if (ac.state === 'running') {
-            await Promise.resolve(ac.suspend()).catch(() => { });
-          }
-        }
-      } catch { }
-    }
-  } catch { }
-}
-
-/** Remove obvious vendor iframes globally. */
-function nukeVendorIframes(): void {
-  try {
-    const frames = document.querySelectorAll('iframe');
-    frames.forEach((f) => {
-      try {
-        const src = (f as HTMLIFrameElement).src || '';
-        if (/callannie|animato/i.test(src) || (f.id && /annie|avatar/i.test(f.id))) {
-          try { (f as HTMLIFrameElement).src = 'about:blank'; } catch { }
-          try { f.remove(); } catch { }
-        }
-      } catch { }
-    });
-  } catch { }
-}
-// Cleanly stop any media and mic, and hide the Play row
-async function stopMediaAndVoice(): Promise<void> {
-  if (tearingDown) { uiLog.debug('stopMediaAndVoice: already running'); return; }
-  tearingDown = true;
-  try {
-    // 1) Politely tell SDKs to stop first, then wait
-    try { setAnnieMic(false); } catch { }
-    try { await Promise.resolve(disconnectAnnie() as any); } catch { }
-    try { disconnectRealtime(); } catch { }
-
-    // Cancel any Web Speech TTS immediately
-    try { window.speechSynthesis?.cancel?.(); } catch { }
-
-    // 2) Stop/clear any audio/video elements under our known roots
-    stopMediaIn(document.getElementById('avatarPanel'));
-    stopMediaIn(document.getElementById('annieRoot'));
-    stopMediaIn(document.getElementById('panel'));
-
-    // Remote/fallback sinks
-    const ra = document.getElementById('remoteAudio') as HTMLAudioElement | null;
-    if (ra) {
-      try { ra.pause(); } catch { }
-      ra.muted = true; ra.currentTime = 0;
-      try { (ra as any).srcObject = null; } catch { }
-    }
-    const fa = document.getElementById('fallbackAudio') as HTMLAudioElement | null;
-    if (fa) { try { fa.pause(); } catch { }; fa.currentTime = 0; }
-
-    // Self cam (if any)
-    const selfCamEl = document.getElementById('selfCam') as HTMLVideoElement | null;
-    const ms = (selfCamEl?.srcObject as MediaStream) || null;
-    if (ms) {
-      try { ms.getTracks().forEach(t => t.stop()); } catch { }
-      try { if (selfCamEl) selfCamEl.srcObject = null; } catch { }
-    }
-
-    // 3) Now nuke surfaces that might recreate audio after disconnect
-    nukeVendorIframes();
-    await closePossibleAudioContexts();
-
-    // 4) Safety pass: stop anything we proactively tracked (PCs, streams, contexts)
-    try { await hardStopAllTrackedMedia(); } catch { }
-
-    // 5) Hide the play row/button
-    document.getElementById('composer')?.classList.add('hidden');
-    document.getElementById('micFab')?.classList.add('hidden');
-
-    // Give the browser a tick to flush halted audio pipelines
-    try { await new Promise(r => setTimeout(r, 60)); } catch { }
-  } finally {
-    // Release the re‑entrancy lock and clear trackers
-    tearingDown = false;
-    try {
-      KILL.mediaEls.clear();
-      KILL.streams.clear();
-      KILL.audioCtxs.clear();
-      KILL.pcs.clear();
-    } catch { }
-  }
+// Simple, deterministic session terminator (no heuristics)
+function endAllSessions(): void {
+  try { setAnnieMic(false); } catch {}
+  try { disconnectAnnie(); } catch {}
+  try { disconnectRealtime(); } catch {}
 }
 
 // Shared handler for the avatar ✕ button(s)
 async function handleAvatarEndClick(): Promise<void> {
   // Ensure media is stopped first, then announce end and render results
-  await stopMediaAndVoice();
+  endAllSessions();
   try { document.dispatchEvent(new Event('session:end')); } catch { }
   // Compute and show lightweight results
   saveMemory();
-  let msgs = getMessages({
-    runId: currentRunId ?? undefined,
-    roles: ['user', 'assistant'] as ChatRole[],
-  });
-
-  if (!msgs || msgs.length === 0) {
-    msgs = sliceSinceStart(memory.messages as MemChatMessage[], statsStartIndex);
-  }
+  // Use the messages accumulated since this session began. We clear memory on
+  // `session:start`, so this slice captures the full conversation reliably.
+  let msgs = sliceSinceStart(memory.messages as ChatMessage[], statsStartIndex);
   /* Write out the transcript */
-  const userTurns = msgs.filter(m => m?.role?.toLowerCase() === 'user');
-  const text = userTurns.map(m => m.content || '').join(' ');
+  const text = msgs.map(m => m.role + ": " + m.content || '').join('\n');
   uiLog.info('SESSION TRANSCRIPT: ' + text);
 
-  const stats = computeEvalStats(msgs as MemChatMessage[]);
+  const stats = computeEvalStats(msgs as ChatMessage[]);
 
   showStatsPage(stats, selectedScenarioTitle());
 }
@@ -731,17 +378,8 @@ bindControls({
         setDefaultRunId(runId);
         statsStartIndex = memory.messages.length;
 
-        const animato = await connectAnnie({ token, userId, animatoId, mic, root, username: 'rizma', lang: 'en', runId });
+        const animato = await connectAnnie({ token, userId, animatoId, mic, root, userName: 'Michal', lang: 'en', runId });
         console.log('Annie connected:', animato);
-        attachAnnieDirect(animato);
-        (window as any).__annie = animato;  // expose for console
-        const hasOn = typeof (animato as any).on === 'function';
-        const hasOnDataReceived = 'onDataReceived' in (animato as any);
-        console.log('[annie] surface', { hasOn, hasOnDataReceived });
-
-        if (hasOn) {
-          try { (animato as any).on('data-received', (p: any) => console.log('[on data-received]', p)); } catch {}
-        }
 
         // Hide manual controls and show close (X)
         document.getElementById('annieControls')?.classList.add('hidden');
@@ -828,11 +466,16 @@ onDomReady(() => {
 
   // Mark when a live session starts so we can evaluate only the latest run and tag with a run id
   document.addEventListener('session:start', () => {
-    statsStartIndex = memory.messages.length;
-    if (!currentRunId) {
-      currentRunId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      setDefaultRunId(currentRunId);
-    }
+    // Start each session with a clean slate
+    clearMemory();
+    saveMemory();
+    clearChat();
+    renderHistory(memory);
+
+    // Reset stats window and force a fresh run id
+    statsStartIndex = 0;
+    currentRunId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setDefaultRunId(currentRunId);
   });
 
   // Close (X) on avatar → stop media and show results (support two possible IDs)
@@ -849,7 +492,7 @@ onDomReady(() => {
 
   // Also react to a generic session:end if fired elsewhere
   document.addEventListener('session:end', () => {
-    stopMediaAndVoice();
+    endAllSessions();
   });
 
   // Tabs
@@ -1091,18 +734,6 @@ async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
     }
     case 'response.audio_transcript.done':
     case 'response.done': {
-      // If server reports failure, fall back to HTTP pipeline
-      /*
-      const status = evt?.response?.status;
-      if (status === 'failed') {
-        console.error('Realtime response failed:', evt?.response?.status_details || evt);
-        await fallbackReplyFromHTTP();
-        const track = micStream?.getAudioTracks?.()[0];
-        if (track) track.enabled = true;
-        setBtnRecordingUI(true);
-        break;
-      }
-      */
       // Success path: use transcript if present; else buffered deltas
       uiLog.info('Audio transcript DONE: %o', evt?.transcript || evt?.response?.output_text || '');
       const explicit = evt?.transcript || evt?.response?.output_text || '';
@@ -1154,7 +785,7 @@ async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
 // Try again: reset all state and return to launcher UI
 async function tryAgainReset(): Promise<void> {
   // 1) Kill any residual audio/video aggressively (avatar/iframes/contexts)
-  try { await stopMediaAndVoice(); } catch { }
+  try { endAllSessions(); } catch { }
 
   // 2) Clear chat/memory and disconnect realtime
   try { resetSession(); } catch { }
