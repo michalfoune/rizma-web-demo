@@ -64,11 +64,11 @@
       </button>
       <button class="scenario" data-scenario="feedback" role="option" aria-selected="false">
         <div class="thumb" aria-hidden="true"></div>
-        <div class="label">Deliver Tough Feedback</div>
+        <div class="label">Tough Feedback</div>
       </button>
       <button class="scenario" data-scenario="happyhour" role="option" aria-selected="false">
         <div class="thumb" aria-hidden="true"></div>
-        <div class="label">Social Happy Hour</div>
+        <div class="label">Custom</div>
       </button>
     </div>
   </section>
@@ -318,9 +318,6 @@
           fillEl.style.background = `linear-gradient(90deg, ${color}, ${color})`;
           const sel = document.querySelector('#scenarios .scenario.is-selected .label');
           const rp = (sel && sel.textContent ? sel.textContent : 'Role-Play').trim();
-          const res = v >= 70 ? 'PASS' : 'NEEDS WORK';
-          if (titleEl) titleEl.textContent = `${rp}: ${res}`;
-          if (passEl) passEl.textContent = '';
         }
         // 1) apply initial
         apply(scoreEl.textContent);

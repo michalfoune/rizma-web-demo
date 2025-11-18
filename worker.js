@@ -125,6 +125,110 @@ export default {
       }
     }
 
+    // Route: POST /eval -> evaluate transcript with OpenAI (server-side; keep API key private)
+    if (req.method === "POST" && url.pathname === "/eval") {
+      try {
+        if (!env.OPENAI_API_KEY) {
+          return new Response(JSON.stringify({ error: "server_misconfigured", detail: "Missing OPENAI_API_KEY" }), {
+            status: 500,
+            headers: { ...cors, "content-type": "application/json" },
+          });
+        }
+
+        // Parse body
+        let body = {};
+        try { body = await req.json(); } catch {}
+        const raw = Array.isArray(body.messages) ? body.messages : [];
+
+        // Keep only user/assistant, last N turns, coerce to strings
+        const trimmed = raw
+          .filter(m => m && (m.role === "user" || m.role === "assistant"))
+          .slice(-60)
+          .map(m => ({ role: m.role, content: String(m.content || "") }));
+
+        // If nothing to evaluate, return a benign default
+        if (trimmed.length === 0) {
+          const fallback = {
+            score: 75,
+            pass: true,
+            strengths: ["Kept the conversation going"],
+            improvements: ["Be more specific"],
+            fillerPer100: 0,
+            toneHint: "Balanced",
+            paceHint: "Comfortable",
+          };
+          return new Response(JSON.stringify(fallback), {
+            status: 200,
+            headers: { ...cors, "content-type": "application/json" },
+          });
+        }
+
+        // Prompt (concise, JSON-only)
+        const system = "You are an interview coach. Score the candidate 0–100, return concise arrays of strengths and improvements, estimate filler words per 100 words, and short tone/pace hints. Respond in strict JSON only.";
+        const transcript = trimmed.map(m => `${m.role}: ${m.content}`).join("\n");
+        const user = `Transcript (role: content lines):\n${transcript}\n\nReturn JSON with keys: score, pass, strengths[], improvements[], fillerPer100, toneHint, paceHint.`;
+
+        // Call OpenAI
+        const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "authorization": `Bearer ${env.OPENAI_API_KEY}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: body.model || "gpt-4o-mini",
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            temperature: 0.2,
+            max_tokens: 400,
+          }),
+        });
+
+        const text = await upstream.text();
+        if (!upstream.ok) {
+          return new Response(JSON.stringify({ error: "upstream_error", detail: text.slice(0, 1200) }), {
+            status: upstream.status,
+            headers: { ...cors, "content-type": "application/json" },
+          });
+        }
+
+        // Extract JSON from assistant
+        let parsed = {};
+        try {
+          const data = JSON.parse(text);
+          parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+        } catch { parsed = {}; }
+
+        // Sanitize output fields
+        const num = (v, d) => (Number.isFinite(+v) ? +v : d);
+        const arr = v => (Array.isArray(v) ? v : []);
+        const clamp100 = v => Math.max(0, Math.min(100, v));
+
+        const out = {
+          score: clamp100(num(parsed.score, 75)),
+          pass: typeof parsed.pass === "boolean" ? parsed.pass : true,
+          strengths: arr(parsed.strengths),
+          improvements: arr(parsed.improvements),
+          fillerPer100: num(parsed.fillerPer100, 0),
+          toneHint: typeof parsed.toneHint === "string" ? parsed.toneHint : "Balanced",
+          paceHint: typeof parsed.paceHint === "string" ? parsed.paceHint : "Comfortable",
+        };
+
+        return new Response(JSON.stringify(out), {
+          status: 200,
+          headers: { ...cors, "content-type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "eval_failed", detail: String(e) }), {
+          status: 500,
+          headers: { ...cors, "content-type": "application/json" },
+        });
+      }
+    }
+
     return new Response("Not found", { status: 404, headers: cors });
   },
 };

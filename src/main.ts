@@ -11,7 +11,8 @@ import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
 import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage, ensureLivePane, destroyLivePane, renderLiveTranscript } from './integrations/annie';
-import { Animato_UserID, Animato_ID, Animato_Test_Token } from './config/constants';
+import { Animato_UserID, Animato_ID, Animato_Test_Token, PROXY_BASE } from './config/constants';
+import { evaluateTranscript } from './analysis/evaluator';
 
 // Logger scopes & defaults
 if ((import.meta as any)?.env?.MODE === 'development') setLevel('debug');
@@ -74,48 +75,21 @@ function normalizeRole(r: string | undefined | null): 'user' | 'assistant' | 'ot
   if (v === 'assistant' || v === 'elena') return 'assistant';
   return 'other';
 }
-function computeEvalStats(msgs: ChatMessage[]): EvalStats {
-  const userTurns = msgs.filter(m => normalizeRole(m?.role) === 'user');
 
-  // Plain-text transcript used for logging / fallback
+function buildTranscriptArtifacts(msgs: ChatMessage[]): { text: string; transcriptHtml: string } {
+  // Plain-text transcript (for logging/fallback)
   const text = msgs
     .filter(m => normalizeRole(m.role) !== 'other')
     .map(m => `${normalizeRole(m.role) === 'user' ? 'User' : 'Assistant'}: ${m.content || ''}`)
     .join('\n\n') + '\n';
-  console.log(`This is the text transcript: ${text}`);
 
-  const words = (text.match(/\b\w+\b/g) || []).length;
-  const fillers = (text.match(/\b(um|uh|erm|like|you know|sort of|kinda|basically)\b/gi) || []).length;
-  const fillerPer100 = words ? (fillers / words) * 100 : 0;
-
-  const questions = (text.match(/\?/g) || []).length;
-  const exclaims = (text.match(/!/g) || []).length;
-
-  const strengths: string[] = [];
-  const improvements: string[] = [];
-  if (questions >= Math.max(1, Math.round(userTurns.length * 0.3))) strengths.push('Asked engaging questions');
-  if (fillerPer100 < 3) strengths.push('Clear delivery with minimal fillers; brief pauses signaled preparation and credibility.');
-  if (exclaims <= 2) strengths.push('Controlled, steady tone and pace; authoritative without rush, naturally confident.');
-  if (fillerPer100 >= 3) improvements.push('Reduce filler words');
-  if (questions < 1) improvements.push('Ask one open, team-centric question initially to shift from monologue to dialogue.');
-
-  const toneHint = exclaims > 3 ? 'Excited/strong' : (exclaims === 0 ? 'Calm/neutral' : 'Balanced');
-  const paceHint = words > 0 && userTurns.length > 0 && (words / userTurns.length) > 40 ? 'Dense—slow down' : 'Comfortable';
-
-  let score = 80;
-  score -= Math.min(15, Math.round(fillerPer100));
-  score += Math.min(10, questions * 2);
-  score = Math.max(40, Math.min(100, score));
-
-  // Build WhatsApp-like HTML transcript:
-  // - Assistant bubbles left, User bubbles right
-  // - Show bold "Assistant:" / "User:" only on first bubble of a role run
+  // WhatsApp-like HTML transcript:
   const bubbles: string[] = [];
   let lastRole: 'user' | 'assistant' | 'other' | null = null;
 
   for (const m of msgs) {
     const role = normalizeRole(m.role);
-    if (role === 'other') continue; // skip system/etc
+    if (role === 'other') continue;
     const isUser = role === 'user';
     const showLabel = role !== lastRole;
     lastRole = role;
@@ -124,7 +98,6 @@ function computeEvalStats(msgs: ChatMessage[]): EvalStats {
       ? `<div style="font-weight:600;margin:0 0 4px 0;">${isUser ? 'User' : 'Assistant'}</div>`
       : '';
 
-    // Escape only the message content; keep container tags as real HTML
     const msgHtml = escapeHtml(m.content || '').replace(/\n/g, '<br>');
 
     const bubble = `
@@ -149,17 +122,7 @@ function computeEvalStats(msgs: ChatMessage[]): EvalStats {
   const transcriptHtml =
     `<div style="display:flex;flex-direction:column;gap:6px;">${bubbles.join('')}</div>`;
 
-  return {
-    score,
-    pass: score >= 70,
-    strengths: strengths.length ? strengths : ['Kept the conversation going'],
-    improvements: improvements.length ? improvements : ['Provide one concrete example'],
-    fillerPer100: Math.round(fillerPer100 * 10) / 10,
-    toneHint,
-    paceHint,
-    transcript: text,
-    transcriptHtml
-  };
+  return { text, transcriptHtml };
 }
 
 
@@ -172,7 +135,8 @@ function showStatsPage(stats: EvalStats, title: string) {
   const set = (id: string, v: string) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statsTitle', title || 'Role-Play Results');
   set('statsScore', String(stats.score));
-  set('statsPass', stats.pass ? 'Pass' : 'Needs work');
+  const passLabel = ((stats as any).pass === undefined) ? '' : (stats.pass ? 'Pass' : 'Needs work');
+  set('statsPass', passLabel);
   set('statsFiller', `${stats.fillerPer100.toFixed(1)} / 100 words`);
   set('statsTone', stats.toneHint);
   set('statsPace', stats.paceHint);
@@ -210,6 +174,52 @@ function showStatsPage(stats: EvalStats, title: string) {
   }, { once: true });
 }
 
+function showEvalErrorPage(title: string, transcriptHtml?: string, text?: string) {
+  // Ensure any live sessions are terminated when showing stats
+  try { endAllSessions(); } catch {}
+  const page = document.getElementById('statsPage');
+  if (!page) return;
+
+  const set = (id: string, v: string) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statsTitle', title || 'Role-Play Results');
+  set('statsScore', '—');
+  set('statsPass', 'Evaluation failed due to network issues.');
+  set('statsFiller', '—');
+  set('statsTone', '—');
+  set('statsPace', '—');
+
+  const sUL = document.getElementById('statsStrengths');
+  const iUL = document.getElementById('statsImprovements');
+  if (sUL) sUL.innerHTML = '<li>—</li>';
+  if (iUL) iUL.innerHTML = '<li>—</li>';
+
+  const tr = document.getElementById('statsTranscript') as HTMLElement | null;
+  if (tr) {
+    tr.innerHTML =
+      (transcriptHtml && transcriptHtml.trim())
+        ? transcriptHtml
+        : escapeHtml(text || 'Transcript unavailable for this session.').replace(/\n/g, '<br>');
+  }
+
+  page.classList.remove('hidden');
+  document.getElementById('avatarPanel')?.classList.add('hidden');
+  document.getElementById('panel')?.classList.add('hidden');
+  document.getElementById('composer')?.classList.add('hidden');
+  document.getElementById('scenarios')?.classList.add('hidden');
+  document.getElementById('micFab')?.classList.add('hidden');
+  document.getElementById('composer')?.classList.add('hidden');
+
+  document.getElementById('statsHome')?.addEventListener('click', () => {
+    page.classList.add('hidden');
+    document.getElementById('scenarios')?.classList.remove('hidden');
+    document.getElementById('composer')?.classList.remove('hidden');
+  }, { once: true });
+
+  document.getElementById('statsRetry')?.addEventListener('click', () => {
+    void tryAgainReset();
+  }, { once: true });
+}
+
 
 // === Media/Audio/SDK helpers (extracted for deduplication) ===
 
@@ -223,21 +233,43 @@ function endAllSessions(): void {
 // Shared handler for the avatar ✕ button(s)
 async function handleAvatarEndClick(): Promise<void> {
   // Ensure media is stopped first, then announce end and render results
+  // Hide stats page while we wait for LLM results (avoid stale/placeholder UI)
+  try { document.getElementById('statsPage')?.classList.add('hidden'); } catch {}
+  // Single pre-clear: reset stats header/labels while evaluator runs (no PASS/FAIL yet)
+  try {
+    const title = selectedScenarioTitle();
+    const set = (id: string, v: string) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('statsTitle', title ? `${title}:` : ''); // show only the scenario title + colon
+    set('statsPass', '');
+    set('statsScore', '');
+    set('statsFiller', '');
+    set('statsTone', '');
+    set('statsPace', '');
+    const sUL = document.getElementById('statsStrengths'); if (sUL) sUL.innerHTML = '';
+    const iUL = document.getElementById('statsImprovements'); if (iUL) iUL.innerHTML = '';
+  } catch {}
   endAllSessions();
   try { destroyLivePane(); } catch {}
   try { document.dispatchEvent(new Event('session:end')); } catch { }
-  // Compute and show lightweight results
+  // Compute and show results via LLM evaluator
   saveMemory();
-  // Use the messages accumulated since this session began. We clear memory on
-  // `session:start`, so this slice captures the full conversation reliably.
-  let msgs = sliceSinceStart(memory.messages as ChatMessage[], statsStartIndex);
-  /* Write out the transcript */
-  const text = msgs.map(m => m.role + ": " + m.content || '').join('\n');
+  // Use the messages accumulated since this session began.
+  const msgs = sliceSinceStart(memory.messages as ChatMessage[], statsStartIndex);
+  const { text, transcriptHtml } = buildTranscriptArtifacts(msgs as ChatMessage[]);
   uiLog.info('SESSION TRANSCRIPT: ' + text);
 
-  const stats = computeEvalStats(msgs as ChatMessage[]);
-
-  showStatsPage(stats, selectedScenarioTitle());
+  try {
+    const evalRes = await evaluateTranscript(msgs as ChatMessage[], { endpoint: `${PROXY_BASE}/eval` });
+    const stats: EvalStats = {
+      ...evalRes,
+      transcript: text,
+      transcriptHtml
+    };
+    showStatsPage(stats, selectedScenarioTitle());
+  } catch (e) {
+    uiLog.warn('LLM evaluation failed; showing error notice', e);
+    showEvalErrorPage(selectedScenarioTitle(), transcriptHtml, text);
+  }
 }
 // --- Types ---------------------------------------------------------------
 /** Minimal shape for Realtime events so TS doesn't complain (we only switch on `type`). */
@@ -263,7 +295,8 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
     prompt: `Michal will ask you what you can do. Answer that you can help with interview prep through 
     realistic role-play scenarios that can be tweaked for a particular role and company. You can provide 
-    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc.`,
+    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc. 
+    Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
     kickoff: `Hi Michal, what do you need help with today?`
   },
   /*
@@ -476,6 +509,8 @@ onDomReady(() => {
 
   // Mark when a live session starts so we can evaluate only the latest run and tag with a run id
   document.addEventListener('session:start', () => {
+    // Hide stats page when a new live session begins
+    document.getElementById('statsPage')?.classList.add('hidden');
     // Start each session with a clean slate
     clearMemory();
     saveMemory();
