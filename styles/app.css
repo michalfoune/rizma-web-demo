@@ -619,10 +619,34 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
   color: var(--rz-black);
 }
 
+
 #statsConfidence {
   font-weight: 700;
   font-size: 22px;     /* visibly larger than other metrics */
   color: var(--rz-black);
+}
+
+/* Stats metrics layout using a table */
+.metrics-table {
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.metrics-table th,
+.metrics-table td {
+  padding: 6px 0;          /* taller rows via vertical padding */
+}
+
+.metrics-table th {
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+  padding-right: 40px;     /* extra horizontal space between name and value */
+}
+
+.metrics-table td {
+  text-align: right;
+  white-space: nowrap;
 }
 
 /* Uncomment to hide options to switch between gpt-realtime and CallAnnie SDK */
