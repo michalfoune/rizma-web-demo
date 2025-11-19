@@ -20,7 +20,7 @@ export default {
       try {
         // Optional payload from client to override defaults
         let body = {};
-        try { body = await req.json(); } catch {}
+        try { body = await req.json(); } catch { }
         const model = body.model || "gpt-realtime"; // ensure this matches your project allowlist
         const voice = body.voice || "marin";
         const modalities = body.modalities || ["audio", "text"];
@@ -91,7 +91,7 @@ export default {
         }
         // Optional payload from client { userId?: string, sessionId?: string }
         let payload = {};
-        try { payload = await req.json(); } catch {}
+        try { payload = await req.json(); } catch { }
         const userId = payload.userId || "web_user";
         const sessionId = payload.sessionId || `s_${Date.now()}`;
 
@@ -134,28 +134,54 @@ export default {
             headers: { ...cors, "content-type": "application/json" },
           });
         }
-
+        console.log("=== Evaluation request received ===");
         // Parse body
         let body = {};
-        try { body = await req.json(); } catch {}
+        try { body = await req.json(); } catch { }
         const raw = Array.isArray(body.messages) ? body.messages : [];
 
-        // Keep only user/assistant, last N turns, coerce to strings
         const trimmed = raw
           .filter(m => m && (m.role === "user" || m.role === "assistant"))
           .slice(-60)
           .map(m => ({ role: m.role, content: String(m.content || "") }));
 
-        // If nothing to evaluate, return a benign default
-        if (trimmed.length === 0) {
+        const userTurns = trimmed.filter(m => m.role === "user");
+        const assistantTurns = trimmed.filter(m => m.role === "assistant");
+
+        // Treat only substantial user utterances as valid content
+        const FILLER = /^(um|uh|erm|er|hmm|like|so|you know|okay|ok)$/i;
+        const normalize = (s) =>
+          String(s || "")
+            .replace(/[.,!?…\-]+$/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const contentWordCount = (s) =>
+          normalize(s)
+            .split(/\s+/)
+            .filter(Boolean)
+            .filter((w) => !FILLER.test(w)).length;
+
+        // Drop very short / filler-only fragments from user turns
+        const userTurnsSignificant = userTurns
+          .map((m) => normalize(m.content))
+          .filter((s) => contentWordCount(s) >= 3);
+
+        const userWordCount = userTurnsSignificant
+          .join(" ")
+          .split(/\s+/)
+          .filter(Boolean).length;
+
+        if (userTurnsSignificant.length === 0 || userWordCount < 3) {
           const fallback = {
-            score: 75,
-            pass: true,
-            strengths: ["Kept the conversation going"],
-            improvements: ["Be more specific"],
+            score: 0,
+            pass: false,
+            strengths: [],
+            improvements: ["No meaningful user response detected."],
             fillerPer100: 0,
-            toneHint: "Balanced",
-            paceHint: "Comfortable",
+            toneHint: "",
+            paceHint: "",
+            confidence: 0,
           };
           return new Response(JSON.stringify(fallback), {
             status: 200,
@@ -163,10 +189,21 @@ export default {
           });
         }
 
-        // Prompt (concise, JSON-only)
-        const system = "You are an interview coach. Score the candidate 0–100, return concise arrays of strengths and improvements, estimate filler words per 100 words, and short tone/pace hints. Respond in strict JSON only.";
-        const transcript = trimmed.map(m => `${m.role}: ${m.content}`).join("\n");
-        const user = `Transcript (role: content lines):\n${transcript}\n\nReturn JSON with keys: score, pass, strengths[], improvements[], fillerPer100, toneHint, paceHint.`;
+        // Prompt (concise, JSON-only, assistant context separated)
+        const system = `You are an interview coach. Score ONLY the USER responses, 0–100.
+          Use the full scale. Avoid midline bias (do not anchor around 70–80).
+          Calibration:
+          - Baseline "okay" performance is ~55.
+          - Average solid performance is 60–70.
+          - Award >80 only for clear structure, specific examples, and strong relevance.
+          - <40 for minimal, generic, or off‑topic answers.
+          If the user provides no meaningful response, score 0 and pass=false.
+          Assistant content is context only and MUST NOT affect the score.
+          Return strict JSON: { "score": number, "pass": boolean, "strengths": string[], "improvements": string[], "fillerPer100": number, "toneHint": string, "paceHint": string, "confidence": number }.`;
+
+        const assistantCtx = assistantTurns.map(m => normalize(m.content)).join("\n");
+        const userOnly = userTurnsSignificant.join("\n");
+        console.log(`Scoring: \nAssistant: ${assistantCtx}\nUser: ${userOnly}`);
 
         // Call OpenAI
         const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -180,7 +217,7 @@ export default {
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: system },
-              { role: "user", content: user },
+              { role: "user", content: userOnly },
             ],
             temperature: 0.2,
             max_tokens: 400,
@@ -202,19 +239,46 @@ export default {
           parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
         } catch { parsed = {}; }
 
-        // Sanitize output fields
+        // --- Lightweight heuristics to spread scores and avoid uniform 75s ---
+        const userWords = userTurnsSignificant.join(" ").trim().split(/\s+/).filter(Boolean).length;
+        const assWords = assistantTurns.map(m => normalize(m.content)).join(" ").trim().split(/\s+/).filter(Boolean).length;
+        const totalWords = Math.max(1, userWords + assWords);
+        const userShare = userWords / totalWords;
+
+        // Penalties for low participation / low content
+        let penalty = 0;
+        if (userWords < 40) penalty -= 12;
+        else if (userWords < 80) penalty -= 5;
+
+        if (userTurns.length < 3) penalty -= 8;
+
+        if (userShare < 0.35) penalty -= 6;    // spoke too little
+        if (userShare > 0.80) penalty -= 3;    // monologuing too much
+
+        // Deterministic tiny jitter to avoid midline clustering
+        const seed = (userWords + userTurns.length * 13 + assWords * 7) % 7;
+        const jitter = [-3, -2, -1, 0, 1, 2, 3][seed];
+
         const num = (v, d) => (Number.isFinite(+v) ? +v : d);
         const arr = v => (Array.isArray(v) ? v : []);
         const clamp100 = v => Math.max(0, Math.min(100, v));
 
+        // Slightly stricter pass threshold to reduce easy passes
+        const PASS_THRESHOLD = 78;
+
+        // Take the model's score (if present) and apply heuristics
+        let modelScore = num(parsed.score, 0);
+        let scored = clamp100(modelScore + penalty + jitter);
+
         const out = {
-          score: clamp100(num(parsed.score, 75)),
-          pass: typeof parsed.pass === "boolean" ? parsed.pass : true,
+          score: scored,
+          pass: (typeof parsed.pass === "boolean") ? parsed.pass : (scored >= PASS_THRESHOLD),
           strengths: arr(parsed.strengths),
-          improvements: arr(parsed.improvements),
+          improvements: arr(parsed.improvements).length ? arr(parsed.improvements) : ["Provide more specific, relevant responses."],
           fillerPer100: num(parsed.fillerPer100, 0),
-          toneHint: typeof parsed.toneHint === "string" ? parsed.toneHint : "Balanced",
-          paceHint: typeof parsed.paceHint === "string" ? parsed.paceHint : "Comfortable",
+          toneHint: typeof parsed.toneHint === "string" ? parsed.toneHint : "",
+          paceHint: typeof parsed.paceHint === "string" ? parsed.paceHint : "",
+          confidence: clamp100(num(parsed.confidence, 0)),
         };
 
         return new Response(JSON.stringify(out), {

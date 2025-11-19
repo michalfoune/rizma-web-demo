@@ -28,9 +28,14 @@ function toAbsoluteEndpoint(endpoint: string): string {
 }
 
 export type EvalResult = {
-  score: number; pass: boolean;
-  strengths: string[]; improvements: string[];
-  fillerPer100: number; toneHint: string; paceHint: string;
+  score: number;
+  pass: boolean;
+  strengths: string[];
+  improvements: string[];
+  fillerPer100: number;
+  toneHint: string;
+  paceHint: string;
+  confidence: number; // 0–100 perceived user confidence
 };
 
 type EvalOpts = {
@@ -52,10 +57,14 @@ export async function evaluateTranscript(
 
   if (filtered.length === 0) {
     return {
-      score: 75, pass: true,
-      strengths: ['Kept the conversation going'],
-      improvements: ['Be more specific'],
-      fillerPer100: 0, toneHint: 'Balanced', paceHint: 'Comfortable',
+      score: 0,
+      pass: false,
+      strengths: [],
+      improvements: ['No meaningful user response detected.'],
+      fillerPer100: 0,
+      toneHint: '',
+      paceHint: '',
+      confidence: 0,
     };
   }
 
@@ -78,16 +87,17 @@ export async function evaluateTranscript(
 
     const num = (v: any, d: number) => (Number.isFinite(+v) ? +v : d);
     const arr = (v: any) => (Array.isArray(v) ? v : []);
-    const clamp01 = (v: number) => Math.max(0, Math.min(100, v));
+    const clamp100 = (v: number) => Math.max(0, Math.min(100, v));
 
     return {
-      score: clamp01(num(data.score, 75)),
-      pass: Boolean(data.pass ?? true),
+      score: clamp100(num(data.score, 0)),
+      pass: Boolean(data.pass ?? (num(data.score, 0) >= 75)),
       strengths: arr(data.strengths),
       improvements: arr(data.improvements),
       fillerPer100: num(data.fillerPer100, 0),
-      toneHint: String(data.toneHint ?? 'Balanced'),
-      paceHint: String(data.paceHint ?? 'Comfortable'),
+      toneHint: String(data.toneHint ?? ''),
+      paceHint: String(data.paceHint ?? ''),
+      confidence: clamp100(num(data.confidence, 0)),
     };
   } finally {
     clearTimeout(t);

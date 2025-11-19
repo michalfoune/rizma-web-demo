@@ -259,8 +259,14 @@ p.lead {
   box-shadow: 0 6px 24px rgba(0,0,0,.35);
   object-fit: cover;
 }
+#annieStage .self-cam { 
+  transform: scaleX(-1) !important; 
+  transform-origin: 50% 50%; 
+}
 @media (max-width: 720px){
-  .self-cam{ width: clamp(144px, 28.8vw, 216px); }
+  .self-cam{ 
+    width: clamp(144px, 28.8vw, 216px);
+  }
 }
 
 /* --- tiny utility classes moved from inline styles --- */
@@ -275,6 +281,7 @@ p.lead {
 .mt-10 { margin-top: 10px; }
 .ml-auto { margin-left: auto; }
 .ml-12 { margin-left: 12px; }
+.mr-8 { margin-right: 8px; }
 .btn-circle-36 { width: 36px; height: 36px; border-radius: 10px; }
 .link-btn { font-size: 12px; color: var(--gray-600); background: transparent; border: none; text-decoration: underline; cursor: pointer; }
 .pos-static { position: static !important; }
@@ -571,6 +578,22 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
   margin-right: 125px
 }
 
+/* Stats: larger, bold numeric score when .big-score is present */
+#statsScore.big-score {
+  font-weight: 800;
+  font-size: clamp(28px, 3.5vw, 30px);
+  line-height: 1;
+  letter-spacing: 0.2px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rz-black);
+}
+
+@media (max-width: 420px) {
+  #statsScore.big-score {
+    font-size: 26px;
+  }
+}
+
 /* Keep 80 and /100 on one line, aligned by baseline */
 #statsScore .stats-score {
   display: inline-flex;
@@ -581,11 +604,25 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
   color: var(--rz-black);
 }
 
+
 /* Add breathing room above and below the green progress bar */
 #statsPage .progress,
 #statsProgress {
   margin-top: 14px !important;   /* space above */
   margin-bottom: 24px !important;/* space below */
+}
+
+/* --- Stats: Confidence emphasis (bigger + bold) --- */
+.metric:has(#statsConfidence) dt {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--rz-black);
+}
+
+#statsConfidence {
+  font-weight: 700;
+  font-size: 22px;     /* visibly larger than other metrics */
+  color: var(--rz-black);
 }
 
 /* Uncomment to hide options to switch between gpt-realtime and CallAnnie SDK */
@@ -664,7 +701,7 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 #annieStage,
 #annieRoot,
 .annie-stage { --fit: cover; }
-#annieStage video,
+#annieStage video:not(.self-cam),
 #annieStage canvas,
 #annieStage img {
   object-fit: var(--fit, contain) !important; /* default contain; JS may set --fit: cover */

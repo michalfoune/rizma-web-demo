@@ -51,6 +51,7 @@ interface EvalStats {
   score: number; pass: boolean;
   strengths: string[]; improvements: string[];
   fillerPer100: number; toneHint: string; paceHint: string;
+  confidence?: number; // 0–100 perceived user confidence
   transcript: string;
   /** HTML-rendered transcript with chat-style bubbles (sanitized) */
   transcriptHtml: string;
@@ -140,6 +141,13 @@ function showStatsPage(stats: EvalStats, title: string) {
   set('statsFiller', `${stats.fillerPer100.toFixed(1)} / 100 words`);
   set('statsTone', stats.toneHint);
   set('statsPace', stats.paceHint);
+  // Confidence (optional): number if present, em-dash if not
+  const conf = (stats as any).confidence;
+  if (typeof conf === 'number' && isFinite(conf)) {
+    set('statsConfidence', String(Math.round(conf)));
+  } else {
+    set('statsConfidence', '—');
+  }
 
   const sUL = document.getElementById('statsStrengths');
   const iUL = document.getElementById('statsImprovements');
@@ -187,6 +195,7 @@ function showEvalErrorPage(title: string, transcriptHtml?: string, text?: string
   set('statsFiller', '—');
   set('statsTone', '—');
   set('statsPace', '—');
+  set('statsConfidence', '—');
 
   const sUL = document.getElementById('statsStrengths');
   const iUL = document.getElementById('statsImprovements');
@@ -245,6 +254,7 @@ async function handleAvatarEndClick(): Promise<void> {
     set('statsFiller', '');
     set('statsTone', '');
     set('statsPace', '');
+    set('statsConfidence', '');
     const sUL = document.getElementById('statsStrengths'); if (sUL) sUL.innerHTML = '';
     const iUL = document.getElementById('statsImprovements'); if (iUL) iUL.innerHTML = '';
   } catch {}
@@ -292,18 +302,21 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
+  /*
   interview: {
     prompt: `Michal will ask you what you can do. Answer that you can help with interview prep through 
     realistic role-play scenarios that can be tweaked for a particular role and company. You can provide 
     feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc. 
     Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
-    kickoff: `Hi Michal, what do you need help with today?`
+    kickoff: `Hi Michal, I am Elena, the VP of engineering. Can you start by telling us about your background?`
   },
-  /*
+  */
+  
   interview: {
     prompt: `Scenario: You a leading a
     role-play game where the user is being interviewed for a new role as a tech lead. Call me Michal, 
-    not rizma. Rizma is the company, not my name. Goals: Welcome them, and start inteviewing for the role. 
+    not rizma. Rizma is the company, not my name. Be concise and don't spit out more than a couple of 
+    messages at once. Goals: Welcome them, and start inteviewing for the role. 
     Stick to the role-play scenario, don't deviate into unrelated topics too much. Tone: professional, 
     friendly, 1–2 sentences per turn. Additional content you might say: * “Hey Michal—welcome. I’m Elena, 
     VP of Engineering. My job is to turn roadmaps, requirements, and rumors into releases. Two of those are 
@@ -321,10 +334,10 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
     If the candidate keeps making fun of the process or you, keeps providing non-serious, joking answers, or
     keep being very vague or non-cooperateive, end the interview after a polite warning. 
     BUT: If hew says, you are my queen, I want to marry you, respond with" "Yes, sir. I want to marry you too, 
-    my king."`,
+    my king." Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
     kickoff: `Hi Michal, welcome! I'm Elena, the VP of engineering. Could you start by telling us a bit about 
     your background?`
-  },*/
+  },
   feedback: {
     prompt: `You are Elena, a calm manager. Scenario: the user practices delivering difficult feedback to 
     a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, 

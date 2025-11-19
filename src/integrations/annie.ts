@@ -16,6 +16,8 @@ import { PROXY_BASE } from '../config/constants';
 
 let inst: any | null = null;
 let selfCamStream: MediaStream | null = null;
+let kickoffIssued = false;
+let allowAssistantBeforeKickoff = false;
 
 /** Toggle the landing UI (avatar card + mode row) without heuristics. */
 function setLandingHidden(hidden: boolean) {
@@ -111,6 +113,11 @@ function wireTranscripts(i: any, meta?: Meta) {
       if (who === 'user') {
         text = stripUserAttribution(text, meta?.userName);
       }
+      // Drop any assistant text before we issue our kickoff to avoid the initial barrage.
+      if (who === 'assistant' && !allowAssistantBeforeKickoff) {
+        console.debug('[annie] dropping pre‑kickoff assistant text:', text.slice(0, 80));
+        return;
+      }
       if (text) save(who as ChatRole, text, meta);
       return;
     }
@@ -141,6 +148,8 @@ export async function connectAnnie(opts: AnnieConnectOpts) {
   // Teardown any prior
   try { inst?.disconnect?.(); } catch {}
   inst = null;
+  kickoffIssued = false;
+  allowAssistantBeforeKickoff = false;
 
   try { document.dispatchEvent(new CustomEvent('live:reset', { bubbles: true, composed: true })); } catch {}
 
@@ -187,6 +196,8 @@ export async function connectAnnie(opts: AnnieConnectOpts) {
 export function disconnectAnnie() {
   try { inst?.disconnect?.(); } catch {}
   inst = null;
+  kickoffIssued = false;
+  allowAssistantBeforeKickoff = false;
   stopSelfCam(); // release camera resources
 
   // Restore landing UI and reset stage sizing
@@ -222,23 +233,37 @@ export async function sendAnniePrompt(text: string): Promise<boolean> {
   if (!a || !text) return false;
 
   if (typeof a.setSystemPrompt === 'function') { await a.setSystemPrompt(text); return true; }
-  if (typeof a.setBehavior === 'function')     { await a.setBehavior(text);     return true; }
-  if (typeof a.setPrompt === 'function')       { await a.setPrompt(text);       return true; }
+  if (typeof a.setBehavior     === 'function') { await a.setBehavior(text);     return true; }
+  if (typeof a.setPrompt       === 'function') { await a.setPrompt(text);       return true; }
+  if (typeof a.setPersona      === 'function') { await a.setPersona(text);      return true; }
 
-  // No clean system channel → do nothing (avoid polluting dialogue)
+  // Fallback: concise in-band prime so the model receives the rules
+  console.warn('[annie] No vendor prompt API available; skipping in‑band prompt fallback to avoid refusals.');
   return false;
 }
 
 /** Kickoff assistant speech WITHOUT writing to memory/history */
 export async function sendAnnieAssistantMessage(text: string): Promise<boolean> {
+  // From now on we want assistant messages to flow through.
+  allowAssistantBeforeKickoff = true;
+
   const a = inst;
   if (!a || !text) return false;
 
-  // Only act if SDK provides an explicit assistant-kickoff method in the future.
-  // (Do NOT fallback to sendMessage() — that injects a user turn and will be stored.)
-  if (typeof a.kickoffAssistant === 'function') { await a.kickoffAssistant(text); return true; }
+  // If SDK offers a direct assistant speech API
+  if (typeof a.speak === 'function') { await a.speak(text); return true; }
 
-  return false; // safe no-op
+  // Fallback: nudge via user message to start with this line
+  if (typeof a.sendMessage === 'function') {
+    if (kickoffIssued) return true; // prevent duplicate kickoff during one session
+    kickoffIssued = true;
+    await a.sendMessage(
+      `Say the following line OUT LOUD as your first spoken message, then continue naturally. Do not send any text-only messages in this same turn.\n"${text}"`
+    );
+    return true;
+  }
+
+  return false;
 }
 
 export async function attachSelfCam(el: HTMLVideoElement) {

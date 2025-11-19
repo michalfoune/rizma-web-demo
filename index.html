@@ -158,6 +158,10 @@
           <h3>Delivery</h3>
           <dl class="metrics">
             <div class="metric">
+              <dt>Confidence</dt>
+              <dd id="statsConfidence">—</dd>
+            </div>
+            <div class="metric">
               <dt>WPM</dt>
               <dd id="statsWpm">—</dd>
             </div>
@@ -309,15 +313,36 @@
         const titleEl = document.getElementById('statsTitle');
         if (!scoreEl || !fillEl) return;
         function apply(val) {
-          const v = Math.max(0, Math.min(100, Number(val) || 0));
+          const scoreElText = (val == null ? '' : String(val)).trim();
+          const n = Number(scoreElText);
+          const isPending = !isFinite(n) || scoreElText === '' || scoreElText === '—';
+
+          const sel = document.querySelector('#scenarios .scenario.is-selected .label');
+          const rp = (sel && sel.textContent ? sel.textContent : 'Role-Play').trim();
+
+          if (isPending) {
+            // Pending: no verdict, neutral bar
+            fillEl.style.width = '0%';
+            fillEl.style.background = '#eee';
+            if (titleEl) titleEl.textContent = `${rp}:`;
+            if (passEl) passEl.textContent = '';
+            return;
+          }
+
+          const v = Math.max(0, Math.min(100, n));
           fillEl.style.width = v + '%';
+
           // color hints by thresholds
           let color = '#22c55e'; // green
           if (v < 60) color = '#ef4444'; // red
           else if (v < 75) color = '#f59e0b'; // amber
           fillEl.style.background = `linear-gradient(90deg, ${color}, ${color})`;
-          const sel = document.querySelector('#scenarios .scenario.is-selected .label');
-          const rp = (sel && sel.textContent ? sel.textContent : 'Role-Play').trim();
+
+          const res = v >= 75 ? 'PASS' : 'NEEDS WORK';
+          if (titleEl) titleEl.textContent = `${rp}: ${res}`;
+
+          // Do not set pass/fail text here; main.ts manages #statsPass
+          if (passEl) passEl.textContent = '';
         }
         // 1) apply initial
         apply(scoreEl.textContent);
