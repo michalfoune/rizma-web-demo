@@ -629,19 +629,27 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 /* Stats metrics layout using a table */
 .metrics-table {
   border-collapse: collapse;
-  margin: 0;
+  margin: 0 auto;              /* center the table on the stats page */
+  border: 1px solid #e5e5e5;   /* thin light-gray border around whole table */
+  border-radius: 8px;          /* subtle rounding */
+  overflow: hidden;            /* ensure rounded corners clip the border */
 }
 
 .metrics-table th,
 .metrics-table td {
-  padding: 6px 0;          /* taller rows via vertical padding */
+  padding: 8px 16px;           /* add left/right padding so text doesn’t touch border */
 }
 
 .metrics-table th {
   font-weight: 400;
   text-align: left;
   white-space: nowrap;
-  padding-right: 40px;     /* extra horizontal space between name and value */
+  padding-right: 70px;     /* extra horizontal space between name and value on top of base padding */
+}
+
+/* Make the 'Confidence:' label bold without changing its size */
+.metrics-table tr:first-child th {
+  font-weight: 700;
 }
 
 .metrics-table td {

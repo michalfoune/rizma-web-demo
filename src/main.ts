@@ -333,10 +333,9 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
     In case of openly inappropriate behavior, sexual or otherwise, threathening etc. end the interview promptly.
     If the candidate keeps making fun of the process or you, keeps providing non-serious, joking answers, or
     keep being very vague or non-cooperateive, end the interview after a polite warning. 
-    BUT: If hew says, you are my queen, I want to marry you, respond with" "Yes, sir. I want to marry you too, 
+    BUT: If he says "You are my queen, I want to marry you," respond with "Yes, sir. I want to marry you too, 
     my king." Don't correct how the user pronounces your name be it Alina, Mia or anything else. Just accept it.`,
-    kickoff: `Hi Michal, welcome! I'm Mia, the VP of engineering. Could you start by telling us a bit about 
-    your background?`
+    kickoff: `Hi Michal, welcome! I'm Mia, what sets your leadership style apart?`
   },
   feedback: {
     prompt: `You are Mia, a calm manager. Scenario: the user practices delivering difficult feedback to 

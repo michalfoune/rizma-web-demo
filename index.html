@@ -273,7 +273,8 @@
           const scenario = btn.getAttribute('data-scenario');
           if (scenario === 'introductions') {
             // Add briefcase icon for Job Interview (icon after label)
-            scenarioTitleEl.innerHTML = label + ' <span class="icon-briefcase" aria-hidden="true">💼</span>';
+            // scenarioTitleEl.innerHTML = label + '<span class="icon-briefcase" aria-hidden="true">💼</span>';
+            scenarioTitleEl.innerHTML = label + ' — Demo Night Edition ' + '<span class="icon-briefcase" aria-hidden="true">🎭</span>';
           } else {
             scenarioTitleEl.textContent = label;
           }
@@ -360,12 +361,12 @@
           const el = document.getElementById(id);
           if (el) el.textContent = val;
         };
-        set('statsWpm', '138');              // words per minute
-        set('statsFillers', '3 (um/uh)');    // filler count
-        set('statsPacing', 'Even');
-        set('statsTone', 'Calm/neutral');
-        set('statsTalkTime', '62%');
-        set('statsInterruptions', '1');
+        // set('statsWpm', '138');              // words per minute
+        // set('statsFillers', '3 (um/uh)');    // filler count
+        // set('statsPacing', 'Even');
+        // set('statsTone', 'Calm/neutral');
+        // set('statsTalkTime', '62%');
+        // set('statsInterruptions', '1');
       }
       // Populate when a session ends (and if the page is opened directly)
       document.addEventListener('session:end', fillMockMetrics);
