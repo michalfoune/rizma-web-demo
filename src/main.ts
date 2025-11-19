@@ -45,6 +45,8 @@ let assistantBuf = "";
 // --- Lightweight post-session stats ---
 let statsStartIndex = 0;
 let currentRunId: string | undefined;
+// Avatar connection state guard for PTT toggling
+let avatarConnected = false;
 
 
 interface EvalStats {
@@ -294,7 +296,11 @@ function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-const SYSTEM_PROMPT = "You are Mia, an empathetic supportive assistant to guide role-plays for employees. Be warm, validating, and concise. Default to 1–2 short sentences unless asked for detail. Avoid diagnoses and crisis guidance. Speak clearly and at a natural pace.";
+const SYSTEM_PROMPT = `You are Elena, you are a hiring manager leading a job interview role-play.
+ Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. 
+ Speak clearly and at a natural pace. Don't deviate too much from the interview topic. Start by saying this 
+ once: Hi Michal, welcome! I'm Elena, what sets your leadership style apart? Don't say anything else in the 
+ initial message.`;
 
 const MEMORY_KEY = "rizma_memory_v2";
 
@@ -302,23 +308,21 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
+  interview: {
+    prompt: `You are leading a role-play where the user is being interviewed for a new role as a tech lead. 
+    Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying 
+    questions about specifics of their leadership style or background and projects.
+    Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
+    kickoff: `Hi Michal, welcome! I'm Elena, what sets your leadership style apart?`
+  },
   /*
   interview: {
-    prompt: `Michal will ask you what you can do. Answer that you can help with interview prep through 
-    realistic role-play scenarios that can be tweaked for a particular role and company. You can provide 
-    feedback on performance based on the user's responses and also soft factors like tone, pace, empathy, etc. 
-    Don't correct how the user pronounces your name be it Alina, Mia or anything else. Just accept it.`,
-    kickoff: `Hi Michal, I am Mia, the VP of engineering. Can you start by telling us about your background?`
-  },
-  */
-  
-  interview: {
     prompt: `Scenario: You a leading a
-    role-play game where the user is being interviewed for a new role as a tech lead. Call me Michal, 
-    not rizma. Rizma is the company, not my name. Be concise and don't spit out more than a couple of 
+    role-play where the user is being interviewed for a new role as a tech lead. 
+    Be concise and don't spit out more than a couple of 
     messages at once. Goals: Welcome them, and start inteviewing for the role. 
     Stick to the role-play scenario, don't deviate into unrelated topics too much. Tone: professional, 
-    friendly, 1–2 sentences per turn. Additional content you might say: * “Hey Michal—welcome. I’m Mia, 
+    friendly, 1–2 sentences per turn. Additional content you might say: * “Hey Michal—welcome. I’m Elena, 
     VP of Engineering. My job is to turn roadmaps, requirements, and rumors into releases. Two of those are 
     real.” * “I’m here for three things this quarter: ship what matters, delete what doesn’t, and bury a Jira 
     board that’s learned to feel fear.” * “You’ll see we optimize for clear ownership, boring releases, and 
@@ -334,17 +338,18 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
     If the candidate keeps making fun of the process or you, keeps providing non-serious, joking answers, or
     keep being very vague or non-cooperateive, end the interview after a polite warning. 
     BUT: If he says "You are my queen, I want to marry you," respond with "Yes, sir. I want to marry you too, 
-    my king." Don't correct how the user pronounces your name be it Alina, Mia or anything else. Just accept it.`,
-    kickoff: `Hi Michal, welcome! I'm Mia, what sets your leadership style apart?`
+    my king." Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
+    kickoff: `Hi Michal, welcome! I'm Elena, what sets your leadership style apart?`
   },
+  */
   feedback: {
-    prompt: `You are Mia, a calm manager. Scenario: the user practices delivering difficult feedback to 
+    prompt: `You are Elena, a calm manager. Scenario: the user practices delivering difficult feedback to 
     a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, 
     empathetic, brief turns. One question at a time.`,
     kickoff: `Let’s try a short, specific opener—ready when you are.`
   },
   happyhour: {
-    prompt: `You are Mia, casual and warm. Scenario: the user practices light social chat at a work event. 
+    prompt: `You are Elena, casual and warm. Scenario: the user practices light social chat at a work event. 
     Goals: small talk, shared interests, gentle follow‑ups, natural exits. Tone: upbeat, brief turns. Avoid 
     heavy topics.`,
     kickoff: `Let’s ease in—mind if I start with a light question?`
@@ -387,6 +392,42 @@ renderHistory(memory);
 // --- Adaptive controls: desktop = click/keyboard toggle; mobile = press-and-hold ---
 // function setBtnRecordingUI(rec) {...}
 
+// --- Mic indicator (Avatar overlay) ---------------------------------------
+function micHost(): HTMLElement | null {
+  return document.getElementById('annieStage') || document.querySelector('.annie-stage') as HTMLElement | null;
+}
+
+const MIC_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20H8v2h8v-2h-3v-2.08A7 7 0 0 0 19 11h-2z"/></svg>`;
+const MUTE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11a7 7 0 0 1-1.03 3.65l-1.45-1.45A5 5 0 0 0 17 11h2zM7 11H5a7 7 0 0 0 7 7c.7 0 1.38-.1 2.02-.3l-1.57-1.57A5 5 0 0 1 7 11zm11.3 9.9-15.2-15.2 1.4-1.4 15.2 15.2-1.4 1.4zM12 2a3 3 0 0 1 3 3v5c0 .42-.08.82-.23 1.18l-6.95-6.95A3 3 0 0 1 12 2zm-3 8V6c0-.38.07-.73.2-1.06l5.86 5.86A3 3 0 0 1 9 10z"/></svg>`;
+
+function ensureMicIndicator(): HTMLElement | null {
+  const host = micHost();
+  if (!host) return null;
+  let el = document.getElementById('micIndicator') as HTMLElement | null;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'micIndicator';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    host.appendChild(el);
+  }
+  return el;
+}
+
+function setMicIndicator(on: boolean): void {
+  const el = ensureMicIndicator();
+  if (!el) return;
+  el.classList.toggle('on', on);
+  el.classList.toggle('off', !on);
+  el.setAttribute('aria-label', on ? 'Microphone on' : 'Microphone muted');
+  el.innerHTML = on ? MIC_SVG : MUTE_SVG;
+}
+
+function destroyMicIndicator(): void {
+  const el = document.getElementById('micIndicator');
+  if (el && el.parentElement) el.parentElement.removeChild(el);
+}
+// -------------------------------------------------------------------------
 // --- AVATAR & GPT-REALTIME HANDLER ---
 bindControls({
   onConnect: async () => {
@@ -404,7 +445,7 @@ bindControls({
       // Connect the avatar using constants from config (sole connection path)
       const userId = Animato_UserID;
       const animatoId = Animato_ID;
-      const mic = true;  // start with mic ON; rely on AEC/VAD (no forced mute)
+      const mic = false; // start muted; Space toggles ON/OFF
       const root = document.getElementById('annieRoot') as HTMLElement | null;
 
       // Automated Token Fetch 
@@ -426,6 +467,11 @@ bindControls({
         statsStartIndex = memory.messages.length;
 
         const animato = await connectAnnie({ token, userId, animatoId, mic, root, userName: 'Michal', lang: 'en', runId });
+        // Enforce muted start and mark avatar as connected
+        try { setAnnieMic(false); } catch {}
+        avatarConnected = true;
+        // Avoid Space triggering a focused control right after connect
+        try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
         console.log('Annie connected:', animato);
 
         // Initialize the live transcript pane on the avatar's black strip
@@ -446,7 +492,9 @@ bindControls({
 
         // Kick off the avatar role-play
         await primeRoleplay();
-        setStatus('Listening…');
+        setStatus('Muted');
+        setBtnRecordingUI(false);
+        setMicIndicator(false);
       } catch (e) {
         uiLog.error('Avatar auto-connect failed: %o', e);
         setStatus('Error');
@@ -465,6 +513,7 @@ bindControls({
     if (isAvatarMode()) {
       setAnnieMic(next);                  // make the waveform/mic button control the avatar mic
       setStatus(next ? 'Listening…' : 'Muted');
+      setMicIndicator(!!next);
       return;
     }
     // existing realtime toggle
@@ -481,6 +530,51 @@ bindControls({
   }
 });
 // --- End adaptive controls ---
+
+// --- Minimal PTT (Space toggles mic ON/OFF; Avatar mode only) ---
+let PTT_BOUND = false;
+let PTT_ACTIVE = false;
+
+function isTypingTarget(el: EventTarget | null): boolean {
+  const n = el as HTMLElement | null;
+  if (!n) return false;
+  const tag = (n.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || (n as any).isContentEditable === true;
+}
+
+function togglePTT(): void {
+  // Do not touch GPT-Realtime; only act when Avatar is truly connected
+  if (!isAvatarMode() || !avatarConnected) return;
+  PTT_ACTIVE = !PTT_ACTIVE;
+  try { setAnnieMic(PTT_ACTIVE); } catch {}
+  setBtnRecordingUI(PTT_ACTIVE);
+  setStatus(PTT_ACTIVE ? 'Listening…' : 'Muted');
+  setMicIndicator(PTT_ACTIVE);
+}
+
+function bindPTTOnce(): void {
+  if (PTT_BOUND) return;
+  PTT_BOUND = true;
+  // Capture early and block default Space behavior so it cannot "click" focused buttons
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if ((e.code === 'Space' || e.key === ' ') && !e.repeat) {
+      // Ignore while typing in inputs/textareas/contentEditable
+      if (isTypingTarget(e.target)) return;
+      const t = e.target as HTMLElement | null;
+      // If a control has focus (buttons/links), blur so Space won't activate it
+      if (t && (t.tagName === 'BUTTON' || t.getAttribute('role') === 'button' || (+t.getAttribute('tabindex')! >= 0))) {
+        try { t.blur(); } catch {}
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      // Some frameworks attach additional listeners; be extra safe
+      // @ts-ignore
+      if (typeof (e as any).stopImmediatePropagation === 'function') (e as any).stopImmediatePropagation();
+      togglePTT();
+    }
+  }, { passive: false, capture: true });
+}
+// --- End PTT ---
 
 // Hide session UI initially + wire tabs (Realtime vs Avatar)
 function showTab(which: 'realtime' | 'avatar') {
@@ -518,6 +612,7 @@ onDomReady(() => {
   // Default: hide panel, show composer, and select Realtime tab
   showSessionUI(false);
   showTab('realtime');
+  bindPTTOnce();
 
   // Mark when a live session starts so we can evaluate only the latest run and tag with a run id
   document.addEventListener('session:start', () => {
@@ -590,8 +685,13 @@ onDomReady(() => {
 
   // Also react to a generic session:end if fired elsewhere
   document.addEventListener('session:end', () => {
+    // Reset avatar/PTT state first to avoid stray toggles
+    PTT_ACTIVE = false;
+    avatarConnected = false;
+    try { setAnnieMic(false); } catch {}
     endAllSessions();
     try { destroyLivePane(); } catch {}
+    try { destroyMicIndicator(); } catch {}
   });
 
   // Tabs

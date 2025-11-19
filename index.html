@@ -138,6 +138,11 @@
       <h2 id="statsTitle" class="title mb-8">Session Summary</h2>
       <div class="row wrap gap-16">
         <div class="panel flex-1 min-280">
+          <!-- Loading indicator shown while evaluation is pending -->
+          <div id="statsLoading" class="stats-loading hidden" role="status" aria-live="polite">
+            <div class="spinner" aria-hidden="true"></div>
+            <span class="sr-only">Evaluating…</span>
+          </div>
           <div class="row align-center gap-12">
             <span id="statsScore" class="big-score mr-8"></span>
             <div class="progress" style="flex:1; height:12px; background:#eee; border-radius:9999px; overflow:hidden;">
@@ -273,8 +278,8 @@
           const scenario = btn.getAttribute('data-scenario');
           if (scenario === 'introductions') {
             // Add briefcase icon for Job Interview (icon after label)
-            // scenarioTitleEl.innerHTML = label + '<span class="icon-briefcase" aria-hidden="true">💼</span>';
-            scenarioTitleEl.innerHTML = label + ' — Demo Night Edition ' + '<span class="icon-briefcase" aria-hidden="true">🎭</span>';
+            scenarioTitleEl.innerHTML = label + ' ' + '<span class="icon-briefcase" aria-hidden="true">💼</span>';
+            // scenarioTitleEl.innerHTML = label + ' — Demo Night Edition ' + '<span class="icon-briefcase" aria-hidden="true">🎭</span>';
           } else {
             scenarioTitleEl.textContent = label;
           }
@@ -314,6 +319,7 @@
         const fillEl = document.getElementById('statsProgressFill');
         const passEl = document.getElementById('statsPass');
         const titleEl = document.getElementById('statsTitle');
+        const loadingEl = document.getElementById('statsLoading');
         if (!scoreEl || !fillEl) return;
         function apply(val) {
           const scoreElText = (val == null ? '' : String(val)).trim();
@@ -329,10 +335,12 @@
             fillEl.style.background = '#eee';
             if (titleEl) titleEl.textContent = `${rp}:`;
             if (passEl) passEl.textContent = '';
+            if (loadingEl) loadingEl.classList.remove('hidden');
             return;
           }
 
           const v = Math.max(0, Math.min(100, n));
+          if (loadingEl) loadingEl.classList.add('hidden');
           fillEl.style.width = v + '%';
 
           // color hints by thresholds

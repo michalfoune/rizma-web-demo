@@ -771,3 +771,50 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 
 /* role label shown only on first bubble of each run */
 #liveTranscript .label { font-weight: 600; margin: 0 0 3px; }
+
+/* --- Mic indicator (Avatar PTT) ----------------------------------------- */
+#micIndicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;                      /* above live transcript (z:6) */
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.55);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  backdrop-filter: blur(6px);
+  pointer-events: none;             /* purely an indicator; don't capture clicks */
+}
+#micIndicator svg { width: 16px; height: 16px; display: block; }
+#micIndicator.on  { background: rgba(16,185,129,.9); }  /* green */
+#micIndicator.off { background: rgba(156,163,175,.9); }  /* gray */
+
+/* --- Stats: loading spinner shown while evaluation runs ------------------ */
+#statsLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 6px 0 10px;
+  color: #6a6a72;                 /* neutral caption */
+  font-size: 14px;
+}
+
+#statsLoading .spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  border: 3px solid rgba(0,0,0,.12);            /* track */
+  border-top-color: var(--accent, #FF6A4D);     /* brand color */
+  animation: rz-spin 0.9s linear infinite;
+  box-sizing: border-box;
+}
+
+@keyframes rz-spin {
+  to { transform: rotate(360deg); }
+}
