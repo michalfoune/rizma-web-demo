@@ -296,11 +296,7 @@ function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-const SYSTEM_PROMPT = `You are Elena, you are a hiring manager leading a job interview role-play.
- Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. 
- Speak clearly and at a natural pace. Don't deviate too much from the interview topic. Start by saying this 
- once: Hi Michal, welcome! I'm Elena, what sets your leadership style apart? Don't say anything else in the 
- initial message.`;
+const SYSTEM_PROMPT = "You are Elena, you are a hiring manager leading a job interview role-play. Start by saying this once: Hi Michal, welcome! I'm Elena, what sets your leadership style apart? Don't say anything else in the initial message. Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. Speak clearly and at a natural pace. Don't deviate too much from the interview topic.";
 
 const MEMORY_KEY = "rizma_memory_v2";
 
@@ -309,11 +305,8 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
-    prompt: `You are leading a role-play where the user is being interviewed for a new role as a tech lead. 
-    Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying 
-    questions about specifics of their leadership style or background and projects.
-    Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
-    kickoff: `Hi Michal, welcome! I'm Elena, what sets your leadership style apart?`
+    prompt: "You are leading a role-play where the user is being interviewed for a new role as a tech lead. Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying questions about specifics of their leadership style or background and projects. Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.",
+    kickoff: "Hi Michal, welcome! I'm Elena, what sets your leadership style apart?"
   },
   /*
   interview: {
