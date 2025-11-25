@@ -246,6 +246,40 @@ p.lead {
   position: absolute;
   inset: 0;
 }
+
+/* --- Countdown clock overlay (injected by src/ui/countdown.ts) ----------- */
+#countdownMount {
+  position: absolute;
+  inset: 0;                 /* fill the stage so absolute children anchor to stage bounds */
+  z-index: 35;              /* above avatar video, below mic indicator if needed */
+  pointer-events: none;
+}
+
+/* Style/placement for the injected clock element */
+#countdownClock {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 40;
+
+  /* Make it hug the text instead of filling width */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;          /* no full-width bar */
+  max-width: none;
+
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+/* ----------------------------------------------------------------------- */
 .self-cam{
   position: absolute;
   left: auto;

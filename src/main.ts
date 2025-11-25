@@ -3,6 +3,7 @@ import { memory, saveMemory, loadMemory, clearMemory, setDefaultRunId, getMessag
 import type { ChatMessage, ChatRole } from './state/memory';
 import { createPeerConnection, waitForIce } from './rtc/connection';
 import { getEl, setText, setVisible, onDomReady } from './ui/dom';
+import { startCountdown, stopCountdown, DEFAULT_DURATION_SEC } from './ui/countdown';
 import { bindControls, setBtnRecordingUI, setStatus } from './ui/controls';
 import { showSessionUI } from './ui/dom';
 import { addMessage, renderHistory, clearChat } from './ui/chatView';
@@ -11,7 +12,7 @@ import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
 import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage, ensureLivePane, destroyLivePane, renderLiveTranscript } from './integrations/annie';
-import { Animato_UserID, Animato_ID, Animato_Test_Token, PROXY_BASE } from './config/constants';
+import { Animato_UserID, Animato_ID, Animato_Test_Token, PROXY_BASE, AVATAR_NAME } from './config/constants';
 import { evaluateTranscript } from './analysis/evaluator';
 
 // Logger scopes & defaults
@@ -47,6 +48,10 @@ let statsStartIndex = 0;
 let currentRunId: string | undefined;
 // Avatar connection state guard for PTT toggling
 let avatarConnected = false;
+
+// Fallback hard-stop timer (in case countdown onExpire doesn't fire)
+let avatarHardStopTimeoutId: number | null = null;
+let avatarEnding = false;
 
 
 interface EvalStats {
@@ -232,10 +237,34 @@ function showEvalErrorPage(title: string, transcriptHtml?: string, text?: string
 }
 
 
+
 // === Media/Audio/SDK helpers (extracted for deduplication) ===
+
+function armAvatarHardStop(durationMs: number): void {
+  clearAvatarHardStop();
+  avatarEnding = false;
+  avatarHardStopTimeoutId = window.setTimeout(async () => {
+    if (avatarEnding) return;
+    if (!isAvatarMode()) return;
+    avatarEnding = true;
+    uiLog.info('[hard-stop] time up → ending avatar role-play');
+    try { await handleAvatarEndClick(); }
+    catch (e) { uiLog.warn('[hard-stop] handleAvatarEndClick failed', e); }
+    finally { avatarEnding = false; }
+  }, durationMs);
+}
+
+function clearAvatarHardStop(): void {
+  if (avatarHardStopTimeoutId !== null) {
+    clearTimeout(avatarHardStopTimeoutId);
+    avatarHardStopTimeoutId = null;
+  }
+}
 
 // Simple, deterministic session terminator (no heuristics)
 function endAllSessions(): void {
+  try { stopCountdown(); } catch { }
+  try { clearAvatarHardStop(); } catch { }
   try { setAnnieMic(false); } catch { }
   try { disconnectAnnie(); } catch { }
   try { disconnectRealtime(); } catch { }
@@ -296,7 +325,7 @@ function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-const SYSTEM_PROMPT = "You are Elena, you are a hiring manager leading a job interview role-play. Start by saying this once: Hi Michal, welcome! I'm Elena, what sets your leadership style apart? Don't say anything else in the initial message. Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. Speak clearly and at a natural pace. Don't deviate too much from the interview topic.";
+const SYSTEM_PROMPT = `You are ${AVATAR_NAME}, you are a hiring manager leading a job interview role-play. Start by saying this once: Hi Michal, welcome! I'm ${AVATAR_NAME}, what sets your leadership style apart? Don't say anything else in the initial message. Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. Speak clearly and at a natural pace. Don't deviate too much from the interview topic.`;
 
 const MEMORY_KEY = "rizma_memory_v2";
 
@@ -305,8 +334,8 @@ const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12
 // --- Role‑play priming (prompt + kickoff line) ---
 const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   interview: {
-    prompt: "You are leading a role-play where the user is being interviewed for a new role as a tech lead. Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying questions about specifics of their leadership style or background and projects. Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.",
-    kickoff: "Hi Michal, welcome! I'm Elena, what sets your leadership style apart?"
+    prompt: `You are leading a role-play where the user is being interviewed for a new role as a tech lead. Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying questions about specifics of their leadership style or background and projects. Don't correct how the user pronounces your name be it Alina, ${AVATAR_NAME} or anything else. Just accept it.`,
+    kickoff: `Hi Michal, welcome! I'm ${AVATAR_NAME}, what sets your leadership style apart?`
   },
   /*
   interview: {
@@ -336,13 +365,13 @@ const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
   },
   */
   feedback: {
-    prompt: `You are Elena, a calm manager. Scenario: the user practices delivering difficult feedback to 
+    prompt: `You are ${AVATAR_NAME}, a calm manager. Scenario: the user practices delivering difficult feedback to 
     a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, 
     empathetic, brief turns. One question at a time.`,
     kickoff: `Let’s try a short, specific opener—ready when you are.`
   },
   happyhour: {
-    prompt: `You are Elena, casual and warm. Scenario: the user practices light social chat at a work event. 
+    prompt: `You are ${AVATAR_NAME}, casual and warm. Scenario: the user practices light social chat at a work event. 
     Goals: small talk, shared interests, gentle follow‑ups, natural exits. Tone: upbeat, brief turns. Avoid 
     heavy topics.`,
     kickoff: `Let’s ease in—mind if I start with a light question?`
@@ -489,6 +518,26 @@ bindControls({
 
         // Kick off the avatar role-play
         await primeRoleplay();
+
+        // Start countdown only once the avatar role-play is actually ready
+        try {
+          startCountdown({
+            // Use the default duration from countdown.ts (ROLEPLAY_MINUTES * 60)
+            mount: () => document.getElementById('countdownMount'),
+            onExpire: async () => {
+              uiLog.info('[countdown] time up → ending avatar role-play');
+              if (avatarEnding) return;
+              avatarEnding = true;
+              try { await handleAvatarEndClick(); }
+              finally { avatarEnding = false; }
+            },
+          });
+        } catch (e) {
+          uiLog.warn('Countdown start failed', e);
+        }
+        // Fallback hard-stop in case countdown onExpire doesn't fire
+        armAvatarHardStop(DEFAULT_DURATION_SEC * 1000);
+
         setStatus(mic ? 'Listening…' : 'Muted');
         setBtnRecordingUI(mic);
         setMicIndicator(mic);
@@ -652,6 +701,7 @@ onDomReady(() => {
       ensureLivePane();
       renderLiveTranscript([]);
     } catch { }
+    // Countdown is now started only after avatar role-play is primed
   });
 
   // Live transcript: update on memory appends (emitted by annie.ts)
@@ -705,11 +755,13 @@ onDomReady(() => {
 
   // Also react to a generic session:end if fired elsewhere
   document.addEventListener('session:end', () => {
+    try { clearAvatarHardStop(); } catch { }
     // Reset avatar/PTT state first to avoid stray toggles
     PTT_ACTIVE = false;
     avatarConnected = false;
     setPTTDisabled(false);
     try { setAnnieMic(false); } catch { }
+    try { stopCountdown(); } catch { }
     endAllSessions();
     try { destroyLivePane(); } catch { }
     try { destroyMicIndicator(); } catch { }
@@ -1005,6 +1057,7 @@ async function handleServerEvent(evt: RealtimeEvent): Promise<void> {
 // Try again: reset all state and return to launcher UI
 async function tryAgainReset(): Promise<void> {
   // 1) Kill any residual audio/video aggressively (avatar/iframes/contexts)
+  try { stopCountdown(); } catch { }
   try { endAllSessions(); } catch { }
 
   // 2) Clear chat/memory and disconnect realtime
@@ -1036,6 +1089,8 @@ async function tryAgainReset(): Promise<void> {
 }
 
 function resetSession() {
+  try { stopCountdown(); } catch { }
+  try { clearAvatarHardStop(); } catch { }
   try { disconnectRealtime(); } catch { }
   clearMemory();
   clearChat();
