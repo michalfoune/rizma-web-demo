@@ -816,3 +816,52 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 @keyframes rz-spin {
   to { transform: rotate(360deg); }
 }
+/* --- PTT toggle (sits to the right of mode radios) ----------------------- */
+.mode-row,
+#modeRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ptt-toggle {
+  margin-left: auto;           /* push the switch to the far right of the row */
+  display: flex;
+}
+
+.ptt-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+}
+
+.ptt-switch input {
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  background: #e5e7eb;         /* gray-200 track */
+  border-radius: 999px;
+  position: relative;
+  outline: none;
+  transition: background .2s ease;
+}
+
+.ptt-switch input::after {
+  content: "";
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  background: #fff;            /* white knob */
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  transition: transform .2s ease;
+}
+
+.ptt-switch input:checked { background: #16a34a; }      /* green when on */
+.ptt-switch input:checked::after { transform: translateX(16px); }
+
+.ptt-label { font-weight: 500; }
+.ptt-hint  { color: #6b7280; font-size: 12px; }

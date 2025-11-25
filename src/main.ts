@@ -131,7 +131,7 @@ function buildTranscriptArtifacts(msgs: ChatMessage[]): { text: string; transcri
 
 function showStatsPage(stats: EvalStats, title: string) {
   // Ensure any live sessions are terminated when showing stats
-  try { endAllSessions(); } catch {}
+  try { endAllSessions(); } catch { }
   const page = document.getElementById('statsPage');
   if (!page) return;
 
@@ -186,7 +186,7 @@ function showStatsPage(stats: EvalStats, title: string) {
 
 function showEvalErrorPage(title: string, transcriptHtml?: string, text?: string) {
   // Ensure any live sessions are terminated when showing stats
-  try { endAllSessions(); } catch {}
+  try { endAllSessions(); } catch { }
   const page = document.getElementById('statsPage');
   if (!page) return;
 
@@ -236,16 +236,16 @@ function showEvalErrorPage(title: string, transcriptHtml?: string, text?: string
 
 // Simple, deterministic session terminator (no heuristics)
 function endAllSessions(): void {
-  try { setAnnieMic(false); } catch {}
-  try { disconnectAnnie(); } catch {}
-  try { disconnectRealtime(); } catch {}
+  try { setAnnieMic(false); } catch { }
+  try { disconnectAnnie(); } catch { }
+  try { disconnectRealtime(); } catch { }
 }
 
 // Shared handler for the avatar ✕ button(s)
 async function handleAvatarEndClick(): Promise<void> {
   // Ensure media is stopped first, then announce end and render results
   // Hide stats page while we wait for LLM results (avoid stale/placeholder UI)
-  try { document.getElementById('statsPage')?.classList.add('hidden'); } catch {}
+  try { document.getElementById('statsPage')?.classList.add('hidden'); } catch { }
   // Single pre-clear: reset stats header/labels while evaluator runs (no PASS/FAIL yet)
   try {
     const title = selectedScenarioTitle();
@@ -259,9 +259,9 @@ async function handleAvatarEndClick(): Promise<void> {
     set('statsConfidence', '');
     const sUL = document.getElementById('statsStrengths'); if (sUL) sUL.innerHTML = '';
     const iUL = document.getElementById('statsImprovements'); if (iUL) iUL.innerHTML = '';
-  } catch {}
+  } catch { }
   endAllSessions();
-  try { destroyLivePane(); } catch {}
+  try { destroyLivePane(); } catch { }
   try { document.dispatchEvent(new Event('session:end')); } catch { }
   // Compute and show results via LLM evaluator
   saveMemory();
@@ -438,7 +438,10 @@ bindControls({
       // Connect the avatar using constants from config (sole connection path)
       const userId = Animato_UserID;
       const animatoId = Animato_ID;
-      const mic = false; // start muted; Space toggles ON/OFF
+      // Decide mic policy from the PTT switch (checked => PTT => start muted)
+      PTT_ENABLED = readPTTFromDOM();       // sync flag at the moment of connect
+      const startMuted = PTT_ENABLED;
+      const mic = !startMuted;              // auto-mic ON when PTT is off
       const root = document.getElementById('annieRoot') as HTMLElement | null;
 
       // Automated Token Fetch 
@@ -461,10 +464,11 @@ bindControls({
 
         const animato = await connectAnnie({ token, userId, animatoId, mic, root, userName: 'Michal', lang: 'en', runId });
         // Enforce muted start and mark avatar as connected
-        try { setAnnieMic(false); } catch {}
+        // Apply initial mic state and mark avatar as connected
+        try { setAnnieMic(mic); } catch { }
         avatarConnected = true;
         // Avoid Space triggering a focused control right after connect
-        try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
+        try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch { }
         console.log('Annie connected:', animato);
 
         // Initialize the live transcript pane on the avatar's black strip
@@ -485,9 +489,9 @@ bindControls({
 
         // Kick off the avatar role-play
         await primeRoleplay();
-        setStatus('Muted');
-        setBtnRecordingUI(false);
-        setMicIndicator(false);
+        setStatus(mic ? 'Listening…' : 'Muted');
+        setBtnRecordingUI(mic);
+        setMicIndicator(mic);
       } catch (e) {
         uiLog.error('Avatar auto-connect failed: %o', e);
         setStatus('Error');
@@ -528,6 +532,17 @@ bindControls({
 let PTT_BOUND = false;
 let PTT_ACTIVE = false;
 
+let PTT_ENABLED = false;
+
+function readPTTFromDOM(): boolean {
+  const el = document.getElementById('pttToggle') as HTMLInputElement | null;
+  return !!el?.checked;
+}
+function setPTTDisabled(disabled: boolean): void {
+  const el = document.getElementById('pttToggle') as HTMLInputElement | null;
+  if (el) el.disabled = disabled;
+}
+
 function isTypingTarget(el: EventTarget | null): boolean {
   const n = el as HTMLElement | null;
   if (!n) return false;
@@ -536,10 +551,11 @@ function isTypingTarget(el: EventTarget | null): boolean {
 }
 
 function togglePTT(): void {
-  // Do not touch GPT-Realtime; only act when Avatar is truly connected
+  // Only when PTT is enabled and Avatar is connected; never in gpt-realtime mode
+  if (!PTT_ENABLED) return;
   if (!isAvatarMode() || !avatarConnected) return;
   PTT_ACTIVE = !PTT_ACTIVE;
-  try { setAnnieMic(PTT_ACTIVE); } catch {}
+  try { setAnnieMic(PTT_ACTIVE); } catch { }
   setBtnRecordingUI(PTT_ACTIVE);
   setStatus(PTT_ACTIVE ? 'Listening…' : 'Muted');
   setMicIndicator(PTT_ACTIVE);
@@ -550,13 +566,14 @@ function bindPTTOnce(): void {
   PTT_BOUND = true;
   // Capture early and block default Space behavior so it cannot "click" focused buttons
   window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!PTT_ENABLED) return;
     if ((e.code === 'Space' || e.key === ' ') && !e.repeat) {
       // Ignore while typing in inputs/textareas/contentEditable
       if (isTypingTarget(e.target)) return;
       const t = e.target as HTMLElement | null;
       // If a control has focus (buttons/links), blur so Space won't activate it
       if (t && (t.tagName === 'BUTTON' || t.getAttribute('role') === 'button' || (+t.getAttribute('tabindex')! >= 0))) {
-        try { t.blur(); } catch {}
+        try { t.blur(); } catch { }
       }
       e.preventDefault();
       e.stopPropagation();
@@ -607,8 +624,18 @@ onDomReady(() => {
   showTab('realtime');
   bindPTTOnce();
 
+  // PTT initial state and listener
+  PTT_ENABLED = readPTTFromDOM(); // default: unchecked => auto-mic ON
+  const pttEl = document.getElementById('pttToggle') as HTMLInputElement | null;
+  if (pttEl) {
+    pttEl.addEventListener('change', () => {
+      PTT_ENABLED = !!pttEl.checked;
+    });
+  }
+
   // Mark when a live session starts so we can evaluate only the latest run and tag with a run id
   document.addEventListener('session:start', () => {
+    setPTTDisabled(true);
     // Hide stats page when a new live session begins
     document.getElementById('statsPage')?.classList.add('hidden');
     // Start each session with a clean slate
@@ -624,7 +651,7 @@ onDomReady(() => {
     try {
       ensureLivePane();
       renderLiveTranscript([]);
-    } catch {}
+    } catch { }
   });
 
   // Live transcript: update on memory appends (emitted by annie.ts)
@@ -681,10 +708,11 @@ onDomReady(() => {
     // Reset avatar/PTT state first to avoid stray toggles
     PTT_ACTIVE = false;
     avatarConnected = false;
-    try { setAnnieMic(false); } catch {}
+    setPTTDisabled(false);
+    try { setAnnieMic(false); } catch { }
     endAllSessions();
-    try { destroyLivePane(); } catch {}
-    try { destroyMicIndicator(); } catch {}
+    try { destroyLivePane(); } catch { }
+    try { destroyMicIndicator(); } catch { }
   });
 
   // Tabs

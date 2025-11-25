@@ -34,6 +34,16 @@
 
       <input type="radio" name="mode" id="modeAvatar" class="seg-radio" checked />
       <label id="tabAvatar" class="seg-label" for="modeAvatar" role="tab" aria-selected="false">Avatar</label>
+
+      <!-- Push-to-Talk toggle -->
+      <div id="pttToggleWrap" class="ptt-toggle">
+        <label class="ptt-switch">
+          <input type="checkbox" id="pttToggle" />
+          <span class="ptt-slider" aria-hidden="true"></span>
+          <span class="ptt-label">Push-to-Talk</span>
+          <span class="ptt-hint">(Space)</span>
+        </label>
+      </div>
     </div>
   </nav>
 
@@ -215,7 +225,6 @@
   <!-- Footer -->
   <footer class="foot">
     <span>Secure &bull; Private &bull; Professional</span>
-    <button id="reset" class="link-btn ml-12">Reset Session</button>
   </footer>
 
   <script>
