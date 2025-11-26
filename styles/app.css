@@ -24,7 +24,7 @@ body {
 
 .card {
     max-width: var(--rz-card-max);
-    margin: 0 auto 28px;
+    margin: 0 auto 0px;
     padding: 32px 20px 26px;
     border-radius: var(--rz-radius-lg);
     background: var(--rz-white);
@@ -640,7 +640,7 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 /* Add breathing room above and below the green progress bar */
 #statsPage .progress,
 #statsProgress {
-  margin-top: 14px !important;   /* space above */
+  margin-top: 0px !important;   /* space above */
   margin-bottom: 24px !important;/* space below */
 }
 
@@ -752,12 +752,20 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 /* === Avatar panel sizing overrides (wider stage) === */
 #avatarPanel.container {
   max-width: min(96vw, 1440px);
+  /* Reduce bottom padding so the gap above stats shrinks */
+  padding-bottom: 0px;  /* was 56px via .container; ~1/3 as tall */
 }
 #avatarPanel .card {
   max-width: 100%;
 }
 #avatarPanel .annie-stage {
   width: 100%;
+}
+
+/* Tighten top padding for stats page so it sits closer to avatar card */
+#statsPage.container {
+  padding-top: 0px;   /* override container padding */
+  margin-top: -24px;  /* pull stats card up closer to avatar card */
 }
 
 /* Allow JS to toggle contain/cover via CSS variable --fit */
