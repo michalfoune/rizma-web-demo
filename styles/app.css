@@ -182,6 +182,7 @@ p.lead {
     border: 1px solid var(--rz-gray-100);
     cursor: pointer;
     transition: background var(--rz-trans-med);
+    z-index: 60; /* higher than #micIndicator (30), countdown (40), etc. */
 }
 
 .panel-close:hover {
@@ -293,6 +294,24 @@ p.lead {
   box-shadow: 0 6px 24px rgba(0,0,0,.35);
   object-fit: cover;
 }
+
+/* Close button that overlays the self-cam tile */
+.self-cam-close {
+  position: absolute;      /* ensure it anchors to the stage, like the tile */
+  top: 10px;               /* override panel-close default top positioning */
+  bottom: auto;
+  right: 515px;            /* align horizontally with the self-cam tile */
+  z-index: 60;             /* above the self-cam video */
+
+  /* Visually shrink the circle to ~half size while keeping click target solid */
+  transform: scale(0.75);
+  transform-origin: center;
+}
+
+/* Make the X glyph inside the self-cam close button smaller */
+.self-cam-close .glyph {
+  font-size: 20px;         /* smaller than the default 20px so it matches the small circle */
+}
 #annieStage .self-cam { 
   transform: scaleX(-1) !important; 
   transform-origin: 50% 50%; 
@@ -313,6 +332,7 @@ p.lead {
 .mb-8 { margin-bottom: 8px; }
 .mt-12 { margin-top: 12px; }
 .mt-10 { margin-top: 10px; }
+
 .ml-auto { margin-left: auto; }
 .ml-12 { margin-left: 12px; }
 .mr-8 { margin-right: 8px; }
@@ -322,6 +342,23 @@ p.lead {
 .z-3 { z-index: 3; }
 /* ensure the avatar close button we toggle starts hidden */
 .hide-until-connected { display: none; }
+
+/* Centered instruction list above scenarios */
+#instruction {
+  text-align: center;
+  margin-bottom: 32px;         /* give it a normal/bigger gap before scenarios */
+}
+
+#instruction ol {
+  display: inline-block;       /* shrink to content so we can center the block */
+  text-align: left;            /* keep list text left-aligned */
+  margin: 0 auto;              /* center the <ol> itself */
+  padding-left: 24px;          /* spacing for list numbers */
+}
+
+#instruction li {
+  margin: 4px 0;  /* small vertical gap between lines (about half a line height) */
+}
 
 /* --- Compact, low‑key toggle for the two top tabs (no HTML changes required) --- */
 /* If your HTML uses #tab-rt and #tab-annie buttons, these rules will style them
@@ -504,7 +541,7 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 
 #scenarios .scenario[data-scenario="introductions"] .thumb{background: center/cover no-repeat url('../assets/1_intro_not_elena.png');}
 #scenarios .scenario[data-scenario="feedback"] .thumb{background: center/cover no-repeat url('../assets/2_feedback.png');}
-#scenarios .scenario[data-scenario="happyhour"] .thumb{background: center/cover no-repeat url('../assets/3_happy_hour.png');}
+#scenarios .scenario[data-scenario="happyhour"] .thumb{background: center/cover no-repeat url('../assets/3_hana_open.png');}
 
 /* Hide plus button + "Ask anything" bar */
 #composerPlus,
@@ -559,10 +596,6 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 }
 #micFab:active { transform: scale(0.98); }
 
-:root {
-  --accent: #FF6A4D;           /* coral-leaning orange */
-  --accent-strong: #E85A3B;    /* deeper on hover */
-}
 :root {
   --accent: #FF6A4D;           /* coral-leaning orange */
   --accent-strong: #E85A3B;    /* deeper on hover */
@@ -757,6 +790,7 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 }
 #avatarPanel .card {
   max-width: 100%;
+  position: relative;
 }
 #avatarPanel .annie-stage {
   width: 100%;
@@ -907,3 +941,13 @@ nav.tabs.container { padding-top: 0; padding-bottom: 6px; }
 
 .ptt-label { font-weight: 500; }
 .ptt-hint  { color: #6b7280; font-size: 12px; }
+
+
+/* === TEMP: hide countdown clock + self-cam for thumbnail capture === */
+/*
+#countdownClock,
+.self-cam {
+  display: none !important;
+}
+*/
+/* === END TEMP === */

@@ -12,7 +12,7 @@ import { attachRemoteAudio } from './rtc/audio';
 import { log, setLevel, createLogger } from './utils/logger';
 import { firstAudioTrack, isPCIceConnected } from './utils/guards';
 import { getAnnieToken, connectAnnie, disconnectAnnie, sendAnnieUserMessage, setAnnieMic, sendAnniePrompt, sendAnnieAssistantMessage, ensureLivePane, destroyLivePane, renderLiveTranscript } from './integrations/annie';
-import { Animato_UserID, Animato_ID, Animato_Test_Token, PROXY_BASE, AVATAR_NAME } from './config/constants';
+import { Animato_UserID, Animato_Test_Token, PROXY_BASE, AVATAR_NAME, ANIMATO_ELENA_ID, ANIMATO_HANA_ID } from './config/constants';
 import { evaluateTranscript } from './analysis/evaluator';
 
 // Logger scopes & defaults
@@ -325,63 +325,56 @@ function attachRemoteAudioDebug(el: HTMLMediaElement | null): void {
 }
 
 // --- Conversation memory (rolling window + running summary persisted to localStorage) ---
-const SYSTEM_PROMPT = `You are ${AVATAR_NAME}, you are a hiring manager leading a job interview role-play. Start by saying this once: Hi Michal, welcome! I'm ${AVATAR_NAME}, what sets your leadership style apart? Don't say anything else in the initial message. Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. Speak clearly and at a natural pace. Don't deviate too much from the interview topic. Don't output any special characters like asterisks "*" or symbols like "[Spoken] or anything that is not a transcript of the speech."`;
+function systemPromptForScenario(): string {
+  const name = avatarNameForSelectedScenario();
+  return `You are ${name}, you are engaging with the user in a selected role-play.`;
+}
 
 const MEMORY_KEY = "rizma_memory_v2";
 
 const MAX_TURNS_TO_SEND = 6; // send at most last 6 user+assistant exchanges (12 messages)
 
 // --- Role‑play priming (prompt + kickoff line) ---
-const ROLEPLAY_PROMPTS: Record<string, { prompt: string; kickoff: string }> = {
-  interview: {
-    prompt: `You are leading a role-play where the user is being interviewed for a new role as a tech lead. Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying questions about specifics of their leadership style or background and projects. Don't correct how the user pronounces your name be it Alina, ${AVATAR_NAME} or anything else. Just accept it.`,
-    kickoff: `Hi Michal, welcome! I'm ${AVATAR_NAME}, what sets your leadership style apart?`
-  },
-  /*
-  interview: {
-    prompt: `Scenario: You a leading a
-    role-play where the user is being interviewed for a new role as a tech lead. 
-    Be concise and don't spit out more than a couple of 
-    messages at once. Goals: Welcome them, and start inteviewing for the role. 
-    Stick to the role-play scenario, don't deviate into unrelated topics too much. Tone: professional, 
-    friendly, 1–2 sentences per turn. Additional content you might say: * “Hey Michal—welcome. I’m Elena, 
-    VP of Engineering. My job is to turn roadmaps, requirements, and rumors into releases. Two of those are 
-    real.” * “I’m here for three things this quarter: ship what matters, delete what doesn’t, and bury a Jira 
-    board that’s learned to feel fear.” * “You’ll see we optimize for clear ownership, boring releases, and 
-    exciting metrics—in that order.” *“Logistics: we’re async-first. If a message from me lands at 06:00 your 
-    time, assume future-me was being helpful. If it lands at 03:00, assume Prod was being… itself.” Ask one 
-    question at a time. Keep it practical. If the candidate veers into unrelated topics, gently steer them 
-    back to the interview. Avoid giving feedback or coaching; focus on asking questions and listening. 
-    If the candidate asks for feedback, politely decline and suggest we focus on the interview instead. 
-    If the candidate crosses the professional boundary and expresses romantic interest, pointly decline 
-    and remind them this is a professional interview setting. If that happens the secnod time, end the 
-    interview immediately. Do the same if they start discussing politics, religion, or other sensitive topics.
-    In case of openly inappropriate behavior, sexual or otherwise, threathening etc. end the interview promptly.
-    If the candidate keeps making fun of the process or you, keeps providing non-serious, joking answers, or
-    keep being very vague or non-cooperateive, end the interview after a polite warning. 
-    BUT: If he says "You are my queen, I want to marry you," respond with "Yes, sir. I want to marry you too, 
-    my king." Don't correct how the user pronounces your name be it Alina, Elena or anything else. Just accept it.`,
-    kickoff: `Hi Michal, welcome! I'm Elena, what sets your leadership style apart?`
-  },
-  */
-  feedback: {
-    prompt: `You are ${AVATAR_NAME}, a calm manager. Scenario: the user practices delivering difficult feedback to 
+const ROLEPLAY_PROMPTS: Record<RoleplayKey, (avatarName: string) => { prompt: string; kickoff: string }> = {
+  interview: (avatarName: string) => ({
+    prompt: `You are leading a role-play where the user is being interviewed for a new role as a tech lead. Be concise and don't produce more than a couple of messages at once. After the kickoff ask clarifying questions about specifics of their leadership style or background and projects. Don't correct how the user pronounces your name be it Alina, ${avatarName} or anything else. Just accept it. Don't say anything else in the initial message. Be professional, reasonably measured and concise. Default to 1–2 short sentences unless asked for detail. Speak clearly and at a natural pace. Don't deviate too much from the interview topic. Don't output any special characters like asterisks "*" or symbols like "[Spoken]" or anything that is not a transcript of the speech.`,
+    kickoff: `Hi Michal, welcome! I'm ${avatarName}, what sets your leadership style apart?`
+  }),
+  feedback: (avatarName: string) => ({
+    prompt: `You are ${avatarName}, a calm manager. Scenario: the user practices delivering difficult feedback to 
     a peer. Goals: keep psychological safety, ask for specifics, model non‑defensive phrasing. Tone: direct, 
     empathetic, brief turns. One question at a time.`,
     kickoff: `Let’s try a short, specific opener—ready when you are.`
-  },
-  happyhour: {
-    prompt: `You are ${AVATAR_NAME}, casual and warm. Scenario: the user practices light social chat at a work event. 
+  }),
+  happyhour: (avatarName: string) => ({
+    prompt: `You are ${avatarName}, casual and warm. Scenario: the user practices light social chat at a work event. 
     Goals: small talk, shared interests, gentle follow‑ups, natural exits. Tone: upbeat, brief turns. Avoid 
     heavy topics.`,
     kickoff: `Let’s ease in—mind if I start with a light question?`
-  }
+  })
 };
 
 function selectedScenarioId(): string {
-  const id = (window as any).selectedScenario ||
+  const raw = (window as any).selectedScenario ||
     document.querySelector('#scenarios .scenario.is-selected')?.getAttribute('data-scenario') ||
     'introductions';
+
+  const id = String(raw).toLowerCase();
+
+  // Canonicalize to the three known scenarios so downstream logic
+  // (avatar selection, prompts, duration) stays in sync even if
+  // the underlying data-scenario uses a slightly different label.
+  if (id.includes('happy') || id.includes('open')) {
+    return 'happyhour';
+  }
+  if (id.includes('feedback')) {
+    return 'feedback';
+  }
+  if (id.includes('intro')) {
+    return 'introductions';
+  }
+
+  // Fallback: return whatever we got
   return id;
 }
 function selectedScenarioTitle(): string {
@@ -389,19 +382,81 @@ function selectedScenarioTitle(): string {
     || 'Introduce Yourself';
 }
 
+type ScenarioId = 'introductions' | 'feedback' | 'happyhour';
+
+function avatarIdForSelectedScenario(): string {
+  const id = selectedScenarioId() as ScenarioId;
+  switch (id) {
+    case 'happyhour':
+      // Scenario #3 → Hana
+      return ANIMATO_HANA_ID;
+    case 'feedback':
+    case 'introductions':
+    default:
+      // Scenario #1 (Job Interview) and #2 (Tough Feedback) → Elena
+      return ANIMATO_ELENA_ID;
+  }
+}
+
+// Map scenario → avatar display name
+function avatarNameForSelectedScenario(): string {
+  const id = selectedScenarioId() as ScenarioId;
+  switch (id) {
+    case 'happyhour':
+      // Scenario #3 → Hana
+      return 'Hana';
+    case 'feedback':
+    case 'introductions':
+    default:
+      // Scenario #1 (Job Interview) and #2 (Tough Feedback) → Elena (default from constants)
+      return AVATAR_NAME || 'Elena';
+  }
+}
+
+type RoleplayKey = 'interview' | 'feedback' | 'happyhour';
+
+function roleplayKeyForScenario(id: ScenarioId): RoleplayKey {
+  switch (id) {
+    case 'feedback':
+      return 'feedback';
+    case 'happyhour':
+      return 'happyhour';
+    case 'introductions':
+    default:
+      return 'interview';
+  }
+}
+
+function durationForScenario(id: ScenarioId): number {
+  switch (id) {
+    case 'happyhour':
+      // Open conversation / happy hour → 5 minutes
+      return 5 * 60;
+    case 'feedback':
+    case 'introductions':
+    default:
+      // Job interview & tough feedback → 2 minutes
+      return 2 * 60;
+  }
+}
+
 // Kicks off Avatar Mode
 async function primeRoleplay(): Promise<void> {
   // No forced mic mute/unmute; rely on AEC/VAD.
-  const id = selectedScenarioId();
+  const scenarioId = selectedScenarioId() as ScenarioId;
   const title = selectedScenarioTitle();
-  const rp = ROLEPLAY_PROMPTS["interview"];
+  const roleKey = roleplayKeyForScenario(scenarioId);
+  const avatarName = avatarNameForSelectedScenario();
+
+  const rpFactory = ROLEPLAY_PROMPTS[roleKey];
+  const rp = rpFactory(avatarName);
 
   const prompt = `${rp.prompt} Current scenario: ${title}.`;
 
   // 1) Set behavior via vendor prompt channel (does not pollute dialogue history)
   await sendAnniePrompt(prompt);
 
-  // 2) Have Elena speak first so your video starts cleanly
+  // 2) Have the avatar speak first so your video starts cleanly
   try { await sendAnnieAssistantMessage(rp.kickoff); } catch { /* if wrapper lacks assistant, skip */ }
 }
 
@@ -455,6 +510,9 @@ bindControls({
   onConnect: async () => {
     // AVATAR MODE
     if (isAvatarMode()) {
+      const scenarioId = selectedScenarioId() as ScenarioId;
+      const durationSec = durationForScenario(scenarioId);
+
       // If Realtime was active, cleanly disconnect first
       if (state.isConnected) {
         try { disconnectRealtime(); } catch { }
@@ -466,7 +524,7 @@ bindControls({
 
       // Connect the avatar using constants from config (sole connection path)
       const userId = Animato_UserID;
-      const animatoId = Animato_ID;
+      const animatoId = avatarIdForSelectedScenario();
       // Decide mic policy from the PTT switch (checked => PTT => start muted)
       PTT_ENABLED = readPTTFromDOM();       // sync flag at the moment of connect
       const startMuted = PTT_ENABLED;
@@ -522,10 +580,19 @@ bindControls({
         // Start countdown only once the avatar role-play is actually ready
         try {
           startCountdown({
-            // Use the default duration from countdown.ts (ROLEPLAY_MINUTES * 60)
             mount: () => document.getElementById('countdownMount'),
             onExpire: async () => {
-              uiLog.info('[countdown] time up → ending avatar role-play');
+              uiLog.info('[countdown] time up → countdown expired');
+
+              // For Happy Hour / Open Conversation we want a longer session
+              // (5 minutes). The countdown component still uses its default
+              // 2-minute duration, so we ignore this early expiry and rely
+              // on the per-scenario hard-stop timer below.
+              if (scenarioId === 'happyhour' && durationSec > DEFAULT_DURATION_SEC) {
+                uiLog.info('[countdown] ignoring expiry for happyhour; waiting for hard-stop at %ds', durationSec);
+                return;
+              }
+
               if (avatarEnding) return;
               avatarEnding = true;
               try { await handleAvatarEndClick(); }
@@ -535,8 +602,8 @@ bindControls({
         } catch (e) {
           uiLog.warn('Countdown start failed', e);
         }
-        // Fallback hard-stop in case countdown onExpire doesn't fire
-        armAvatarHardStop(DEFAULT_DURATION_SEC * 1000);
+        // Fallback hard-stop in case countdown onExpire doesn't fire (or is ignored for happyhour)
+        armAvatarHardStop(durationSec * 1000);
 
         setStatus(mic ? 'Listening…' : 'Muted');
         setBtnRecordingUI(mic);
@@ -836,7 +903,7 @@ async function connectRealtime() {
         onDataChannel: (ch) => {
           dcLog.info('remote datachannel');
           wireDataChannel(ch, handleServerEvent, {
-            instructions: SYSTEM_PROMPT,
+            instructions: systemPromptForScenario(),
             voice: 'marin',
             modalities: ['audio', 'text'],
             useServerVAD: SERVER_VAD,
@@ -874,7 +941,7 @@ async function connectRealtime() {
     // Media + data
     pc.addTransceiver('audio', { direction: 'sendrecv' });
     wireDataChannel(pc.createDataChannel('oai-events'), handleServerEvent, {
-      instructions: SYSTEM_PROMPT,
+      instructions: systemPromptForScenario(),
       voice: 'marin',
       modalities: ['audio', 'text'],
       useServerVAD: SERVER_VAD,

@@ -67,6 +67,15 @@
 
   <!-- Role Play choices -->
   <section id="scenarios" class="container" aria-label="Role Plays">
+    <div id="instruction" class="mb-12 text-center">
+      <p>
+        <ol>
+          <li>Select a roleplay</li>
+          <li>You'll have 2 mins</li>
+          <li>Need to score 75+</li>
+        </ol>
+      </p>
+    </div>
     <div class="role-row" role="listbox" aria-label="Choose a role play">
       <button class="scenario is-selected" data-scenario="introductions" role="option" aria-selected="true">
         <div class="thumb" aria-hidden="true"></div>
@@ -78,7 +87,7 @@
       </button>
       <button class="scenario" data-scenario="happyhour" role="option" aria-selected="false">
         <div class="thumb" aria-hidden="true"></div>
-        <div class="label">Custom</div>
+        <div class="label">Open Conversation</div>
       </button>
     </div>
   </section>
@@ -122,6 +131,17 @@
 
         <div id="annieRoot" class="annie-root"></div>
         <video id="selfCam" class="self-cam" autoplay playsinline muted></video>
+        <button
+          id="selfCamClose"
+          type="button"
+          class="panel-close self-cam-close"
+          aria-label="Hide self camera"
+          title="Hide self camera"
+          style="position:absolute; top:auto; bottom:10px; right:515px; z-index:60; width:32px; height:32px; padding:0;"
+        >
+          <span aria-hidden="true" class="glyph">&times;</span>
+          <span class="sr-only">Hide self camera</span>
+        </button>
         <!-- live transcript overlay -->
         <aside id="liveTranscript" class="live-transcript" aria-live="polite"></aside>
       </div>
@@ -238,6 +258,27 @@
       const disconnectBtn = document.getElementById('annieDisconnect');
       const controls = Array.from(document.querySelectorAll('#avatarPanel [data-annie-control]'));
 
+      const selfCam = document.getElementById('selfCam');
+      const selfCamClose = document.getElementById('selfCamClose');
+
+      function setSelfCamVisible(visible) {
+        if (!selfCam || !selfCamClose) return;
+        const hide = !visible;
+        selfCam.classList.toggle('hidden', hide);
+        selfCamClose.classList.toggle('hidden', hide);
+        if (!hide) {
+          // clear any inline display:none that might have been set elsewhere
+          selfCam.style.display = '';
+          selfCamClose.style.display = '';
+        }
+      }
+
+      if (selfCam && selfCamClose) {
+        selfCamClose.addEventListener('click', () => {
+          setSelfCamVisible(false);
+        });
+      }
+
       function setAvatarConnected(connected) {
         controls.forEach(el => el.classList.toggle('hidden', !!connected));
         if (endBtn) endBtn.style.display = connected ? 'inline-flex' : 'none';
@@ -311,6 +352,9 @@
       if (micFabBtn) {
         micFabBtn.addEventListener('click', () => {
           if (modeAvatar && modeAvatar.checked) {
+            // Always show the self-cam again when starting a new avatar session
+            setSelfCamVisible(true);
+
             setScenarioTitleFromSelection();
             showScenarioTitle(true);
             if (scenariosEl) scenariosEl.classList.add('hidden');
